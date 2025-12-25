@@ -4,8 +4,10 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk import DAG
 from datetime import timedelta, datetime
 
+from pull_sis_api_to_raw_data import pull_sis_api_to_raw_data
+
 default_args = {
-    "depends_on_past": False,
+    "depend_on_past": False,
     #each task instance does not wait for the same task from the previous schedule run to succeed 
     #since the course avalibility of courses changes every semester, we don't need to wait for the previous run to complete
     "retries": 3,
@@ -34,7 +36,10 @@ with DAG (
         task_id="pull_sis_api_to_raw_data",
         python_callable=pull_sis_api_to_raw_data,
         retries=3,
-        op_kwargs={"term": 1252},
+
+
     )
+    
+    t1
 
 
