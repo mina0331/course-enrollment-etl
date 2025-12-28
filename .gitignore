@@ -1,0 +1,10 @@
+# Airflow
+airflow/logs/
+airflow/airflow.db
+airflow/*.pid
+airflow/dags/__pycache__/
+airflow/plugins/__pycache__/
+
+# Secrets
+.env
+.env.*
