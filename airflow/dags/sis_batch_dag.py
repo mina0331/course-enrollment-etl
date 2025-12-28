@@ -9,6 +9,9 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import os
 from airflow.models import Variable
+import psycopg
+from psycopg.rows import dict_row
+
 
 
 
@@ -76,6 +79,47 @@ def upsert_to_mongo(courses: list[dict], term) -> None:
         print("No operations to write")
     client.close()
 
+def extract_transform_course_table(doc: dict) -> dict:
+    return {
+        "course_id": doc["crse_id"],
+        "title":doc["descr"],
+        "credits": doc["units"],
+        "course_mnemonic": doc["subject"] + doc["catalog_nbr"],
+        "section_type": doc["section_type"]
+    }
+
+def connect_mongo():
+    mongo = MongoClient(Variable.get("MONGO_URI"))
+    col = mongo["sis_raw"]["courses"]
+    #finding the database named sis_raw and finding collection named courses 
+
+    with psycopg.connect(Variable.get("POSTGRES_DSN")) as conn:
+        with conn.cursor() as cur:
+            batch = []
+            for doc in col.find({}, no_cursor_timeout=True).batch_size(2000):
+                row = extract_transform_course_table(doc)
+                batch.append(row)
+
+                if len(batch) >= 5000:
+                    load_batch(cur, batch)
+                    batch.clear()
+            if batch:
+                load_batch(cur, batch)
+
+        conn.commit()
+
+def load_batch(cur, rows):
+    cur.executemany(
+        """
+        INSERT INTO courses(course_id, title, section_type, credits, course_mnemonic, raw_payload)
+        VALUES(%(course_id)s, %(title)s, %(section_type)s, %(credits)s, %(course_mnemonic)s, %(raw_payload)s:: jsonb)
+        ON CONFLICT DO NOTHING;
+    """,
+    rows
+    )
+
+
+
 default_args = {
     "depends_on_past": False,
     #each task instance does not wait for the same task from the previous schedule run to succeed 
@@ -109,6 +153,14 @@ with DAG (
         op_kwargs={'given_term':'1262'},
         #Spring 2026
     )
+
+    t2 = PythonOperator(
+        task_id="transforming_data",
+        python_callable=connect_mongo,
+        retries=3,
+    )
+
+    t1 > t2
     
 
 

@@ -6,3 +6,5 @@ export AIRFLOW_HOME=./airflow
 airflow db migrate
 airflow scheduler
 airflow webserver
+
+
