@@ -20,9 +20,10 @@ def pull_sis_api_to_raw_data(**kwargs):
     if not term:
         raise ValueError("A 'given_term' argument must be provided.")
     
-    API_URL = f"https://sisuva.admin.virginia.edu/psc/ihprd/UVSS/SA/s/WEBLIB_HCX_CM.H_CLASS_SEARCH.FieldFormula.IScript_ClassSearch?institution=UVA01&term={term}&acad_career=UGRD&page={page}"
-    #Getting the current semester's courses from the UVA SIS API for undergraduate students
+    
     while True:
+        API_URL = f"https://sisuva.admin.virginia.edu/psc/ihprd/UVSS/SA/s/WEBLIB_HCX_CM.H_CLASS_SEARCH.FieldFormula.IScript_ClassSearch?institution=UVA01&term={term}&acad_career=UGRD&page={page}"
+        #Getting the current semester's courses from the UVA SIS API for undergraduate students
         try: 
             response = requests.get(API_URL)
             response.raise_for_status()
@@ -96,6 +97,7 @@ def extract_transform_course_table(doc: dict) -> dict:
 def extract_transform_section_table(doc: dict) -> dict:
     meetings = doc.get("meetings", [])
     meeting_info = meetings[0] if meetings else {}
+    
     return {
         "course_id": doc["crse_id"],
         "class_nbr": doc["class_nbr"],
@@ -108,6 +110,7 @@ def extract_transform_section_table(doc: dict) -> dict:
         "meetings_days": meeting_info.get("days"),
         "meetings_start_time": meeting_info.get("start_time"),
         "meetings_end_time": meeting_info.get("end_time"),
+        
     }
 
 def extract_transform_instructor_table(doc: dict) -> dict:
@@ -117,7 +120,7 @@ def extract_transform_instructor_table(doc: dict) -> dict:
         if instructor.get("name") == "To Be Announced":
             continue
         instructors.append({
-            "course_id": doc["course_id"],
+            "course_id": doc["crse_id"],
             "term": doc["term"],
             "name": instructor.get("name"),
             "email": instructor.get("email"),
@@ -180,9 +183,15 @@ def load_batch_courses(cur, rows):
 def load_batch_sections(cur, rows):
     cur.executemany(
         """
-        INSERT INTO sections(course_id, class_nbr, term,  instructor_name, capacity, enrollment_status, seats_taken, waitlist_size, current_waitlist, meetings_days, meetings_start_time, meetings_end_time)
-        VALUES(%(course_id)s, %(class_nbr)s, %(term)s, %(instructor_name)s, %(capacity)s, %(enrollment_status)s, %(seats_taken)s, %(waitlist_size)s, %(current_waitlist)s, %(meetings_days)s, %(meetings_start_time)s, %(meetings_end_time)s)
-        ON CONFLICT DO NOTHING;
+        INSERT INTO sections(course_id, class_nbr, term, capacity, enrollment_status, seats_taken, waitlist_size, current_waitlist, meetings_days, meetings_start_time, meetings_end_time)
+        VALUES(%(course_id)s, %(class_nbr)s, %(term)s, %(capacity)s, %(enrollment_status)s, %(seats_taken)s, %(waitlist_size)s, %(current_waitlist)s, %(meetings_days)s, %(meetings_start_time)s, %(meetings_end_time)s)
+        ON CONFLICT (class_nbr, term) DO UPDATE SET
+            course_id = EXCLUDED.course_id,
+            meetings_days = EXCLUDED.meetings_days,
+            meetings_start_time = EXCLUDED.meetings_start_time,
+            meetings_end_time = EXCLUDED.meetings_end_time,
+
+            ;
     """,
     rows
     )
