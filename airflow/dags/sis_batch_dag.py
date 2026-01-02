@@ -1,7 +1,8 @@
 
 from airflow.providers.standard.operators.python import PythonOperator
 
-from airflow.sdk import DAG
+from airflow import DAG
+from annotated_types import doc
 import requests
 from pymongo import MongoClient, UpdateOne
 from datetime import datetime, timezone, timedelta
@@ -9,8 +10,33 @@ from typing import Any, Dict, List, Optional
 from airflow.models import Variable
 import psycopg
 from psycopg.rows import dict_row
+from bson import ObjectId
+import hashlib, json
 
+def iter_docs_paged(col, page_size=2000, query=None, projection=None):
+    query = query or {}
+    last_id = None
 
+    # ensure _id is included for paging
+    if projection is not None:
+        projection = dict(projection)
+        projection["_id"] = 1
+
+    while True:
+        q = dict(query)
+        if last_id is not None:
+            q["_id"] = {"$gt": last_id}
+
+        page = list(
+            col.find(q, projection).sort("_id", 1).limit(page_size)
+        )
+        if not page:
+            break
+
+        for doc in page:
+            yield doc
+
+        last_id = page[-1]["_id"]
 
 
 def pull_sis_api_to_raw_data(**kwargs):
@@ -41,24 +67,31 @@ def pull_sis_api_to_raw_data(**kwargs):
             courses = [courses]
         if len(courses) == 1 and isinstance(courses[0], dict) and "classes" in courses[0]:
             courses = courses[0]["classes"] or []
+        if not courses:
+            break
         #upwrapping by the key classes 
         print("First course keys:", list(courses[0].keys())[:25] if courses else "NO COURSES")
-        upsert_to_mongo(courses, term)
+        upsert_to_mongo(
+            {"term": term, "page": page, "classes": courses},
+            term=term,
+            page=page,
+        )
         page+=1
     
 
-def upsert_to_mongo(courses: list[dict], term) -> None:
+def upsert_to_mongo(courses: list[dict], term, page) -> None:
     MONGODB_URI = Variable.get("MONGODB_URI")
     client = MongoClient(MONGODB_URI)
     col = client["sis_raw"][f"courses_{term}"]
 
     ingested_at = datetime.now(timezone.utc)
+    classes = courses["classes"] if isinstance(courses, dict) else courses
 
     operations = []
-    for c in courses:
-        c["ingested_at"] = ingested_at
+    for c in classes:
         c["term"] = term
-
+        c["page"] = page
+        c["ingested_at"] = ingested_at
         class_nbr = c.get("class_nbr")
         if not class_nbr:
             print("SKIP: missing class_nbr. Keys:", list(c.keys())[:20])
@@ -68,7 +101,7 @@ def upsert_to_mongo(courses: list[dict], term) -> None:
         operations.append(
             UpdateOne(
                 ky, 
-                {"$set": c},
+                {"$set": {**c, "term": term, "page": int(page), "ingested_at": ingested_at}},
                 upsert=True,
             )
         )
@@ -91,6 +124,7 @@ def extract_transform_course_table(doc: dict) -> dict:
         "catalog_nbr": doc["catalog_nbr"],
         "has_discussion": doc.get("component") == "DISC",
         "has_lab": doc.get("component") == "LAB",
+        "component": doc.get("component"),
 
     }
 
@@ -107,9 +141,9 @@ def extract_transform_section_table(doc: dict) -> dict:
         "seats_taken": doc.get("enroll_total", 0),
         "waitlist_size": doc.get("wait_cap", 0),
         "current_waitlist": doc.get("wait_tot", 0),
-        "meetings_days": meeting_info.get("days"),
-        "meetings_start_time": meeting_info.get("start_time"),
-        "meetings_end_time": meeting_info.get("end_time"),
+        "meetings_days": meeting_info.get("days", "TBA"),
+        "meetings_start_time": meeting_info.get("start_time", "TBA"),
+        "meetings_end_time": meeting_info.get("end_time", "TBA"),
         
     }
 
@@ -118,12 +152,15 @@ def extract_transform_instructor_table(doc: dict) -> dict:
     instructors = []
     for instructor in instructor_info:
         if instructor.get("name") == "To Be Announced":
+            print("SKIP: To Be Announced instructor for class_nbr:", doc["class_nbr"])
             continue
+        print("Processing instructor:", instructor.get("name"), "for class_nbr:", doc["class_nbr"])
         instructors.append({
             "course_id": doc["crse_id"],
             "term": doc["term"],
             "name": instructor.get("name"),
             "email": instructor.get("email"),
+            "class_nbr": doc["class_nbr"],
         })
     return instructors
 
@@ -133,52 +170,61 @@ def connect_mongo(**kwargs):
     mongo = MongoClient(Variable.get("MONGODB_URI"))
     col = mongo["sis_raw"][f"courses_{term}"]
     #finding the database named sis_raw and finding a collection named courses 
+    print("mongo total documents:", col.count_documents({}))
 
     with psycopg.connect(Variable.get("POSTGRES_DSN")) as conn:
         with conn.cursor() as cur:
             batch = []
-            for doc in col.find({}, no_cursor_timeout=True).batch_size(2000):
+            for doc in iter_docs_paged(col, page_size=2000):
                 if (table_name == 'courses'):
                     row = extract_transform_course_table(doc)
+                    batch.append(row)
                 elif (table_name == 'sections'):
                     row = extract_transform_section_table(doc)
+                    batch.append(row)
                 elif (table_name == 'instructors'):
                     instructors = extract_transform_instructor_table(doc)
-                    for instructor in instructors:
-                        batch.append(instructor)
-                    continue
-                batch.append(row)
+                    batch.extend(instructors)
+                if len(batch) >= 5000: 
+                    flush(cur, conn, table_name, batch)
+                flush(cur, conn, table_name, batch)
 
-                if len(batch) >= 5000:
-                    if table_name == 'courses':
-                        load_batch_courses(cur, batch)
-                        batch.clear()
-                    elif table_name == 'sections':
-                        load_batch_sections(cur, batch)
-                        batch.clear()
-                    elif table_name == 'instructors':
-                        load_batch_instructors(cur, batch)
-                        batch.clear()
-            if batch:
-                if table_name == 'courses':
-                    load_batch_courses(cur, batch)
-                elif table_name == 'sections':
-                    load_batch_sections(cur, batch)
-                elif table_name == 'instructors':
-                    load_batch_instructors(cur, batch)
+def flush(cur, conn, table_name, batch):
+    try:
+        before = len(batch)
+        if table_name == "courses":
+            load_batch_courses(cur, batch)  # make this return inserted count if possible
+            
+        elif table_name == "sections":
+            inserted = load_batch_sections(cur, batch)
+        else:
+            inserted = load_batch_instructors(cur, batch)
+
         conn.commit()
+        batch.clear()
+    except Exception as e:
+        conn.rollback()
+        print(f"FLUSH FAILED {table_name}: {e}")
+        # optionally: print the first bad row
+        print("sample row:", batch[0] if batch else None)
+        raise
+
+    
+        
 
 def load_batch_courses(cur, rows):
     cur.executemany(
         """
-        INSERT INTO courses(course_id, title, credits, subject, catalog_nbr, has_discussion, has_lab)
-        VALUES(%(course_id)s, %(title)s, %(credits)s, %(subject)s, %(catalog_nbr)s,%(has_discussion)s, %(has_lab)s)
-        ON CONFLICT (subject, catalog_nbr) DO UPDATE SET
+        INSERT INTO courses(course_id, title, credits, subject, catalog_nbr, has_discussion, has_lab, component)
+        VALUES(%(course_id)s, %(title)s, %(credits)s, %(subject)s, %(catalog_nbr)s,%(has_discussion)s, %(has_lab)s, %(component)s)
+        ON CONFLICT (course_id) DO UPDATE SET
             has_discussion = EXCLUDED.has_discussion or courses.has_discussion,
             has_lab = EXCLUDED.has_lab or courses.has_lab
     """,
     rows
     )
+    
+    
 
 def load_batch_sections(cur, rows):
     cur.executemany(
@@ -189,21 +235,19 @@ def load_batch_sections(cur, rows):
             course_id = EXCLUDED.course_id,
             meetings_days = EXCLUDED.meetings_days,
             meetings_start_time = EXCLUDED.meetings_start_time,
-            meetings_end_time = EXCLUDED.meetings_end_time,
-
-            ;
+            meetings_end_time = EXCLUDED.meetings_end_time
     """,
     rows
     )
 
 def load_batch_instructors(cur, rows):
+    print("Loading instructors, count:", len(rows))
     cur.executemany(
         """
-        INSERT INTO instructors(course_id, term, name, email)
-        VALUES(%(course_id)s, %(term)s, %(name)s, %(email)s)
-        ON CONFLICT (course_id, name, email) DO UPDATE SET
-            term = EXCLUDED.term
-
+        INSERT INTO instructors(course_id, term, name, email, class_nbr)
+        VALUES(%(course_id)s, %(term)s, %(name)s, %(email)s, %(class_nbr)s)
+        ON CONFLICT (term, class_nbr, name, email) DO UPDATE SET
+            course_id = EXCLUDED.course_id
     """,
     rows
     )
@@ -264,9 +308,10 @@ with DAG (
         op_kwargs={'table_name':'instructors', 'given_term': '1262'},
 
     )
+    
        
 
-    t1 > t2 > t3 > t4
+    t1 >> t2 >> t3 >> t4
     
 
 

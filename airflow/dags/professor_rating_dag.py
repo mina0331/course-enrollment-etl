@@ -131,7 +131,6 @@ with DAG (
         op_kwargs={'term': '1262'},
         python_callable=pull_professor_rating_raw_html,
         retries=3,
-        op_kwargs={"term": "1262"}
         #spring 2026
     )
 
