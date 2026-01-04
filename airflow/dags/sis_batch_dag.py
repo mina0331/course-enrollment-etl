@@ -10,8 +10,7 @@ from typing import Any, Dict, List, Optional
 from airflow.models import Variable
 import psycopg
 from psycopg.rows import dict_row
-from bson import ObjectId
-import hashlib, json
+
 
 def iter_docs_paged(col, page_size=2000, query=None, projection=None):
     query = query or {}
@@ -151,7 +150,8 @@ def extract_transform_instructor_table(doc: dict) -> dict:
     instructor_info = doc.get("instructors", [{}])
     instructors = []
     for instructor in instructor_info:
-        if instructor.get("name") == "To Be Announced":
+        name = instructor.get("name")
+        if name in {"To Be Announced", "-"}:
             print("SKIP: To Be Announced instructor for class_nbr:", doc["class_nbr"])
             continue
         print("Processing instructor:", instructor.get("name"), "for class_nbr:", doc["class_nbr"])
