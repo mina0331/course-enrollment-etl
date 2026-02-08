@@ -54,13 +54,12 @@ from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from socket import socket
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
 from uuid import UUID
 
 import attrs
 import msgspec
 import structlog
-from fastapi import Body
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_serializer
 
 from airflow.sdk.api.datamodels._generated import (
@@ -72,6 +71,7 @@ from airflow.sdk.api.datamodels._generated import (
     ConnectionResponse,
     DagRun,
     DagRunStateResponse,
+    HITLDetailRequest,
     InactiveAssetsResponse,
     PrevSuccessfulDagRunResponse,
     TaskInstance,
@@ -84,6 +84,7 @@ from airflow.sdk.api.datamodels._generated import (
     TISkippedDownstreamTasksStatePayload,
     TISuccessStatePayload,
     TriggerDAGRunPayload,
+    UpdateHITLDetailPayload,
     VariableResponse,
     XComResponse,
     XComSequenceIndexResponse,
@@ -96,6 +97,7 @@ try:
 except ImportError:
     # Available on Unix and Windows (so "everywhere") but lets be safe
     recv_fds = None  # type: ignore[assignment]
+
 
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger as Logger
@@ -203,6 +205,10 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
 
         return self._get_response()
 
+    async def asend(self, msg: SendMsgType) -> ReceiveMsgType | None:
+        """Send a request to the parent without blocking."""
+        raise NotImplementedError
+
     @overload
     def _read_frame(self, maxfds: None = None) -> _ResponseFrame: ...
 
@@ -306,7 +312,7 @@ class AssetEventSourceTaskInstance:
     def xcom_pull(
         self,
         *,
-        key: str = "return_value",  # TODO: Make this a constant; see RuntimeTaskInstance.
+        key: str = "return_value",
         default: Any = None,
     ) -> Any:
         from airflow.sdk.execution_time.xcom import XCom
@@ -494,7 +500,7 @@ class DagRunStateResult(DagRunStateResponse):
 
 
 class PreviousDagRunResult(BaseModel):
-    """Response containing previous DAG run information."""
+    """Response containing previous Dag run information."""
 
     dag_run: DagRun | None = None
     type: Literal["PreviousDagRunResult"] = "PreviousDagRunResult"
@@ -544,7 +550,7 @@ class TaskStatesResult(TaskStatesResponse):
 
 
 class DRCount(BaseModel):
-    """Response containing count of DAG Runs matching certain filters."""
+    """Response containing count of Dag Runs matching certain filters."""
 
     count: int
     type: Literal["DRCount"] = "DRCount"
@@ -566,29 +572,52 @@ class SentFDs(BaseModel):
     fds: list[int]
 
 
+class CreateHITLDetailPayload(HITLDetailRequest):
+    """Add the input request part of a Human-in-the-loop response."""
+
+    type: Literal["CreateHITLDetailPayload"] = "CreateHITLDetailPayload"
+
+
+class HITLDetailRequestResult(HITLDetailRequest):
+    """Response to CreateHITLDetailPayload request."""
+
+    type: Literal["HITLDetailRequestResult"] = "HITLDetailRequestResult"
+
+    @classmethod
+    def from_api_response(cls, hitl_request: HITLDetailRequest) -> HITLDetailRequestResult:
+        """
+        Get HITLDetailRequestResult from HITLDetailRequest (API response).
+
+        HITLDetailRequest is the API response model. We convert it to HITLDetailRequestResult
+        for communication between the Supervisor and task process, adding the discriminator field
+        required for the tagged union deserialization.
+        """
+        return cls(**hitl_request.model_dump(exclude_defaults=True), type="HITLDetailRequestResult")
+
+
 ToTask = Annotated[
-    Union[
-        AssetResult,
-        AssetEventsResult,
-        ConnectionResult,
-        DagRunStateResult,
-        DRCount,
-        ErrorResponse,
-        PrevSuccessfulDagRunResult,
-        SentFDs,
-        StartupDetails,
-        TaskRescheduleStartDate,
-        TICount,
-        TaskStatesResult,
-        VariableResult,
-        XComCountResponse,
-        XComResult,
-        XComSequenceIndexResult,
-        XComSequenceSliceResult,
-        InactiveAssetsResult,
-        OKResponse,
-        PreviousDagRunResult,
-    ],
+    AssetResult
+    | AssetEventsResult
+    | ConnectionResult
+    | DagRunStateResult
+    | DRCount
+    | ErrorResponse
+    | PrevSuccessfulDagRunResult
+    | SentFDs
+    | StartupDetails
+    | TaskRescheduleStartDate
+    | TICount
+    | TaskStatesResult
+    | VariableResult
+    | XComCountResponse
+    | XComResult
+    | XComSequenceIndexResult
+    | XComSequenceSliceResult
+    | InactiveAssetsResult
+    | CreateHITLDetailPayload
+    | HITLDetailRequestResult
+    | OKResponse
+    | PreviousDagRunResult,
     Field(discriminator="type"),
 ]
 
@@ -698,28 +727,7 @@ class GetXComSequenceSlice(BaseModel):
 
 class SetXCom(BaseModel):
     key: str
-    value: Annotated[
-        # JsonValue can handle non JSON stringified dicts, lists and strings, which is better
-        # for the task intuitibe to send to the supervisor
-        JsonValue,
-        Body(
-            description="A JSON-formatted string representing the value to set for the XCom.",
-            openapi_examples={
-                "simple_value": {
-                    "summary": "Simple value",
-                    "value": "value1",
-                },
-                "dict_value": {
-                    "summary": "Dictionary value",
-                    "value": {"key2": "value2"},
-                },
-                "list_value": {
-                    "summary": "List value",
-                    "value": ["value1"],
-                },
-            },
-        ),
-    ]
+    value: JsonValue
     dag_id: str
     run_id: str
     task_id: str
@@ -858,6 +866,19 @@ class GetDRCount(BaseModel):
     type: Literal["GetDRCount"] = "GetDRCount"
 
 
+class GetHITLDetailResponse(BaseModel):
+    """Get the response content part of a Human-in-the-loop response."""
+
+    ti_id: UUID
+    type: Literal["GetHITLDetailResponse"] = "GetHITLDetailResponse"
+
+
+class UpdateHITLDetail(UpdateHITLDetailPayload):
+    """Update the response content part of an existing Human-in-the-loop response."""
+
+    type: Literal["UpdateHITLDetail"] = "UpdateHITLDetail"
+
+
 class MaskSecret(BaseModel):
     """Add a new value to be redacted in task logs."""
 
@@ -871,39 +892,40 @@ class MaskSecret(BaseModel):
 
 
 ToSupervisor = Annotated[
-    Union[
-        DeferTask,
-        DeleteXCom,
-        GetAssetByName,
-        GetAssetByUri,
-        GetAssetEventByAsset,
-        GetAssetEventByAssetAlias,
-        GetConnection,
-        GetDagRunState,
-        GetDRCount,
-        GetPrevSuccessfulDagRun,
-        GetPreviousDagRun,
-        GetTaskRescheduleStartDate,
-        GetTICount,
-        GetTaskStates,
-        GetVariable,
-        GetXCom,
-        GetXComCount,
-        GetXComSequenceItem,
-        GetXComSequenceSlice,
-        PutVariable,
-        RescheduleTask,
-        RetryTask,
-        SetRenderedFields,
-        SetXCom,
-        SkipDownstreamTasks,
-        SucceedTask,
-        ValidateInletsAndOutlets,
-        TaskState,
-        TriggerDagRun,
-        DeleteVariable,
-        ResendLoggingFD,
-        MaskSecret,
-    ],
+    DeferTask
+    | DeleteXCom
+    | GetAssetByName
+    | GetAssetByUri
+    | GetAssetEventByAsset
+    | GetAssetEventByAssetAlias
+    | GetConnection
+    | GetDagRunState
+    | GetDRCount
+    | GetPrevSuccessfulDagRun
+    | GetPreviousDagRun
+    | GetTaskRescheduleStartDate
+    | GetTICount
+    | GetTaskStates
+    | GetVariable
+    | GetXCom
+    | GetXComCount
+    | GetXComSequenceItem
+    | GetXComSequenceSlice
+    | PutVariable
+    | RescheduleTask
+    | RetryTask
+    | SetRenderedFields
+    | SetXCom
+    | SkipDownstreamTasks
+    | SucceedTask
+    | ValidateInletsAndOutlets
+    | TaskState
+    | TriggerDagRun
+    | DeleteVariable
+    | ResendLoggingFD
+    | CreateHITLDetailPayload
+    | UpdateHITLDetail
+    | GetHITLDetailResponse
+    | MaskSecret,
     Field(discriminator="type"),
 ]

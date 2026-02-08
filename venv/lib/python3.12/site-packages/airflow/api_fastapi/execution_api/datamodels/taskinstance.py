@@ -19,12 +19,12 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AwareDatetime,
-    Discriminator,
     Field,
+    JsonValue,
     Tag,
     TypeAdapter,
     WithJsonSchema,
@@ -71,6 +71,7 @@ class TerminalStateNonSuccess(str, Enum):
     FAILED = TerminalTIState.FAILED
     SKIPPED = TerminalTIState.SKIPPED
     REMOVED = TerminalTIState.REMOVED
+    UPSTREAM_FAILED = TerminalTIState.UPSTREAM_FAILED
 
 
 class TITerminalStatePayload(StrictBaseModel):
@@ -218,15 +219,13 @@ def ti_state_discriminator(v: dict[str, str] | StrictBaseModel) -> str:
 # It is called "_terminal_" to avoid future conflicts if we added an actual state named "terminal"
 # and "_other_" is a catch-all for all other states that are not covered by the other schemas.
 TIStateUpdate = Annotated[
-    Union[
-        Annotated[TITerminalStatePayload, Tag("_terminal_")],
-        Annotated[TISuccessStatePayload, Tag("success")],
-        Annotated[TITargetStatePayload, Tag("_other_")],
-        Annotated[TIDeferredStatePayload, Tag("deferred")],
-        Annotated[TIRescheduleStatePayload, Tag("up_for_reschedule")],
-        Annotated[TIRetryStatePayload, Tag("up_for_retry")],
-    ],
-    Discriminator(ti_state_discriminator),
+    Annotated[TITerminalStatePayload, Tag("_terminal_")]
+    | Annotated[TISuccessStatePayload, Tag("success")]
+    | Annotated[TITargetStatePayload, Tag("_other_")]
+    | Annotated[TIDeferredStatePayload, Tag("deferred")]
+    | Annotated[TIRescheduleStatePayload, Tag("up_for_reschedule")]
+    | Annotated[TIRetryStatePayload, Tag("up_for_retry")],
+    Field(discriminator=ti_state_discriminator),
 ]
 
 
@@ -248,6 +247,7 @@ class TaskInstance(BaseModel):
     dag_id: str
     run_id: str
     try_number: int
+    dag_version_id: uuid.UUID
     map_index: int = -1
     hostname: str | None = None
     context_carrier: dict | None = None
@@ -258,7 +258,7 @@ class AssetReferenceAssetEventDagRun(StrictBaseModel):
 
     name: str
     uri: str
-    extra: dict
+    extra: dict[str, JsonValue]
 
 
 class AssetAliasReferenceAssetEventDagRun(StrictBaseModel):
@@ -271,7 +271,7 @@ class AssetEventDagRunReference(StrictBaseModel):
     """Schema for AssetEvent model used in DagRun."""
 
     asset: AssetReferenceAssetEventDagRun
-    extra: dict
+    extra: dict[str, JsonValue]
     source_task_id: str | None
     source_dag_id: str | None
     source_run_id: str | None
@@ -298,7 +298,8 @@ class DagRun(StrictBaseModel):
     clear_number: int = 0
     run_type: DagRunType
     state: DagRunState
-    conf: Annotated[dict[str, Any], Field(default_factory=dict)]
+    conf: dict[str, Any] | None = None
+    triggering_user_name: str | None = None
     consumed_asset_events: list[AssetEventDagRunReference]
 
 

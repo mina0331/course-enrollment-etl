@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy_jsonfield
 from sqlalchemy import (
@@ -48,10 +48,32 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import FromClause
 
     from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
-    from airflow.sdk.types import Operator
+    from airflow.serialization.serialized_objects import SerializedBaseOperator
 
 
-def get_serialized_template_fields(task: Operator):
+def _get_nested_value(obj: Any, path: str) -> Any:
+    """
+    Get a nested value from an object using a dot-separated path.
+
+    :param obj: The object to extract the value from
+    :param path: A dot-separated path (e.g., "configuration.query.sql")
+    :return: The value at the nested path, or None if the path doesn't exist
+    """
+    keys = path.split(".")
+    current = obj
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif hasattr(current, key):
+            current = getattr(current, key)
+        else:
+            return None
+        if current is None:
+            return None
+    return current
+
+
+def get_serialized_template_fields(task: SerializedBaseOperator):
     """
     Get and serialize the template fields for a task.
 
@@ -61,7 +83,24 @@ def get_serialized_template_fields(task: Operator):
 
     :meta private:
     """
-    return {field: serialize_template_field(getattr(task, field), field) for field in task.template_fields}
+    rendered_fields = {}
+
+    for field in task.template_fields:
+        rendered_fields[field] = serialize_template_field(getattr(task, field), field)
+
+    renderers = getattr(task, "template_fields_renderers", {})
+    for renderer_path in renderers:
+        if "." in renderer_path:
+            base_field = renderer_path.split(".", 1)[0]
+
+            if base_field in task.template_fields:
+                base_value = getattr(task, base_field)
+                nested_value = _get_nested_value(base_value, renderer_path[len(base_field) + 1 :])
+
+                if nested_value is not None:
+                    rendered_fields[renderer_path] = serialize_template_field(nested_value, renderer_path)
+
+    return rendered_fields
 
 
 class RenderedTaskInstanceFields(TaskInstanceDependencies):
@@ -125,7 +164,7 @@ class RenderedTaskInstanceFields(TaskInstanceDependencies):
             ti.render_templates()
 
         if TYPE_CHECKING:
-            assert ti.task
+            assert isinstance(ti.task, SerializedBaseOperator)
 
         self.task = ti.task
         if os.environ.get("AIRFLOW_IS_K8S_EXECUTOR_POD", None):
@@ -145,7 +184,7 @@ class RenderedTaskInstanceFields(TaskInstanceDependencies):
         return prefix + ">"
 
     def _redact(self):
-        from airflow.sdk.execution_time.secrets_masker import redact
+        from airflow._shared.secrets_masker import redact
 
         if self.k8s_pod_yaml:
             self.k8s_pod_yaml = redact(self.k8s_pod_yaml)

@@ -18,6 +18,7 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { usePoolServiceGetPoolsKey, usePoolServicePatchPool } from "openapi/queries";
 import type { PoolBody } from "openapi/requests/types.gen";
@@ -33,6 +34,7 @@ export const useEditPool = (
 ) => {
   const queryClient = useQueryClient();
   const [error, setError] = useState<unknown>(undefined);
+  const { t: translate } = useTranslation(["common", "admin"]);
 
   const onSuccess = async () => {
     await queryClient.invalidateQueries({
@@ -40,8 +42,12 @@ export const useEditPool = (
     });
 
     toaster.create({
-      description: "Pool has been edited successfully",
-      title: "Pool Edit Request Submitted",
+      description: translate("toaster.update.success.description", {
+        resourceName: translate("admin:pools.pool_one"),
+      }),
+      title: translate("toaster.update.success.title", {
+        resourceName: translate("admin:pools.pool_one"),
+      }),
       type: "success",
     });
 
@@ -59,19 +65,18 @@ export const useEditPool = (
 
   const editPool = (editPoolRequestBody: PoolBody) => {
     const updateMask: Array<string> = [];
+    let parsedDescription = undefined;
 
     if (editPoolRequestBody.slots !== initialPool.slots) {
       updateMask.push("slots");
     }
     if (editPoolRequestBody.description !== initialPool.description) {
+      parsedDescription = editPoolRequestBody.description;
       updateMask.push("description");
     }
     if (editPoolRequestBody.include_deferred !== initialPool.include_deferred) {
       updateMask.push("include_deferred");
     }
-
-    const parsedDescription =
-      editPoolRequestBody.description === "" ? undefined : editPoolRequestBody.description;
 
     mutate({
       poolName: initialPool.name,

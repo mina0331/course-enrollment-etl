@@ -17,20 +17,20 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from dateutil.relativedelta import relativedelta
 from pendulum import DateTime
 
+from airflow._shared.timezones.timezone import coerce_datetime, utcnow
 from airflow.timetables._cron import CronMixin
 from airflow.timetables._delta import DeltaMixin
 from airflow.timetables.base import DagRunInfo, DataInterval, Timetable
-from airflow.utils.timezone import coerce_datetime, utcnow
 
 if TYPE_CHECKING:
     from airflow.timetables.base import TimeRestriction
 
-Delta = Union[datetime.timedelta, relativedelta]
+Delta = datetime.timedelta | relativedelta
 
 
 class _DataIntervalTimetable(Timetable):
@@ -200,6 +200,9 @@ class DeltaDataIntervalTimetable(DeltaMixin, _DataIntervalTimetable):
         if not isinstance(other, DeltaDataIntervalTimetable):
             return NotImplemented
         return self._delta == other._delta
+
+    def __hash__(self):
+        return hash(self._delta)
 
     def serialize(self) -> dict[str, Any]:
         from airflow.serialization.serialized_objects import encode_relativedelta

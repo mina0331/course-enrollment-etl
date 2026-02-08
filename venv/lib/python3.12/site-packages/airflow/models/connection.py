@@ -27,25 +27,28 @@ from json import JSONDecodeError
 from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
-from sqlalchemy import Boolean, Column, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text, select
 from sqlalchemy.orm import declared_attr, reconstructor, synonym
+from sqlalchemy_utils import UUIDType
 
+from airflow._shared.secrets_masker import mask_secret
 from airflow.configuration import ensure_secrets_loaded
 from airflow.exceptions import AirflowException, AirflowNotFoundException
 from airflow.models.base import ID_LEN, Base
 from airflow.models.crypto import get_fernet
-from airflow.sdk.execution_time.secrets_masker import mask_secret
-from airflow.secrets.cache import SecretCache
+from airflow.models.team import Team
+from airflow.sdk import SecretCache
 from airflow.utils.helpers import prune_dict
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.module_loading import import_string
+from airflow.utils.session import NEW_SESSION, provide_session
 
 log = logging.getLogger(__name__)
 # sanitize the `conn_id` pattern by allowing alphanumeric characters plus
 # the symbols #,!,-,_,.,:,\,/ and () requiring at least one match.
 #
 # You can try the regex here: https://regex101.com/r/69033B/1
-RE_SANITIZE_CONN_ID = re.compile(r"^[\w\#\!\(\)\-\.\:\/\\]{1,}$")
+RE_SANITIZE_CONN_ID = re.compile(r"^[\w#!()\-.:/\\]{1,}$")
 # the conn ID max len should be 250
 CONN_ID_MAX_LEN: int = 250
 
@@ -134,6 +137,7 @@ class Connection(Base, LoggingMixin):
     port = Column(Integer())
     is_encrypted = Column(Boolean, unique=False, default=False)
     is_extra_encrypted = Column(Boolean, unique=False, default=False)
+    team_id = Column(UUIDType(binary=False), ForeignKey("team.id"), nullable=True)
     _extra = Column("extra", Text())
 
     def __init__(
@@ -148,6 +152,7 @@ class Connection(Base, LoggingMixin):
         port: int | None = None,
         extra: str | dict | None = None,
         uri: str | None = None,
+        team_id: str | None = None,
     ):
         super().__init__()
         self.conn_id = sanitize_conn_id(conn_id)
@@ -176,6 +181,7 @@ class Connection(Base, LoggingMixin):
         if self.password:
             mask_secret(self.password)
             mask_secret(quote(self.password))
+        self.team_id = team_id
 
     @staticmethod
     def _validate_extra(extra, conn_id) -> None:
@@ -235,6 +241,11 @@ class Connection(Base, LoggingMixin):
             if self.EXTRA_KEY in query:
                 self.extra = query[self.EXTRA_KEY]
             else:
+                for key, value in query.items():
+                    try:
+                        query[key] = json.loads(value)
+                    except (JSONDecodeError, TypeError):
+                        self.log.info("Failed parsing the json for key %s", key)
                 self.extra = json.dumps(query)
 
     @staticmethod
@@ -267,11 +278,20 @@ class Connection(Base, LoggingMixin):
 
         if self.host and "://" in self.host:
             protocol, host = self.host.split("://", 1)
+            # If the protocol in host matches the connection type, don't add it again
+            if protocol == self.conn_type:
+                host_to_use = self.host
+                protocol_to_add = None
+            else:
+                # Different protocol, add it to the URI
+                host_to_use = host
+                protocol_to_add = protocol
         else:
-            protocol, host = None, self.host
+            host_to_use = self.host
+            protocol_to_add = None
 
-        if protocol:
-            uri += f"{protocol}://"
+        if protocol_to_add:
+            uri += f"{protocol_to_add}://"
 
         authority_block = ""
         if self.login is not None:
@@ -286,8 +306,8 @@ class Connection(Base, LoggingMixin):
             uri += authority_block
 
         host_block = ""
-        if host:
-            host_block += quote(host, safe="")
+        if host_to_use:
+            host_block += quote(host_to_use, safe="")
 
         if self.port:
             if host_block == "" and authority_block == "":
@@ -301,15 +321,22 @@ class Connection(Base, LoggingMixin):
         uri += host_block
 
         if self.extra:
+            extra_dict = self.extra_dejson
+            can_flatten = True
+            for value in extra_dict.values():
+                if not isinstance(value, str):
+                    can_flatten = False
+                    break
+
             try:
-                query: str | None = urlencode(self.extra_dejson)
+                query: str | None = urlencode(extra_dict)
             except TypeError:
                 query = None
-            if query and self.extra_dejson == dict(parse_qsl(query, keep_blank_values=True)):
+
+            if can_flatten and query and extra_dict == dict(parse_qsl(query, keep_blank_values=True)):
                 uri += ("?" if self.schema else "/?") + query
             else:
                 uri += ("?" if self.schema else "/?") + urlencode({self.EXTRA_KEY: self.extra})
-
         return uri
 
     def get_password(self) -> str | None:
@@ -541,6 +568,18 @@ class Connection(Base, LoggingMixin):
 
     @classmethod
     def from_json(cls, value, conn_id=None) -> Connection:
+        if hasattr(sys.modules.get("airflow.sdk.execution_time.task_runner"), "SUPERVISOR_COMMS"):
+            from airflow.sdk import Connection as TaskSDKConnection
+
+            warnings.warn(
+                "Using Connection.from_json from `airflow.models` is deprecated."
+                "Please use `from_json` on Connection from sdk(airflow.sdk.Connection) instead",
+                DeprecationWarning,
+                stacklevel=1,
+            )
+
+            return TaskSDKConnection.from_json(value, conn_id=conn_id)  # type: ignore[return-value]
+
         kwargs = json.loads(value)
         extra = kwargs.pop("extra", None)
         if extra:
@@ -561,3 +600,13 @@ class Connection(Base, LoggingMixin):
         conn_repr = self.to_dict(prune_empty=True, validate=False)
         conn_repr.pop("conn_id", None)
         return json.dumps(conn_repr)
+
+    @staticmethod
+    @provide_session
+    def get_team_name(connection_id: str, session=NEW_SESSION) -> str | None:
+        stmt = (
+            select(Team.name)
+            .join(Connection, Team.id == Connection.team_id)
+            .where(Connection.conn_id == connection_id)
+        )
+        return session.scalar(stmt)

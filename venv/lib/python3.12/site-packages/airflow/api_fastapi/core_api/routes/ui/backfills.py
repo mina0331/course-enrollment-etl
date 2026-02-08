@@ -20,6 +20,7 @@ from typing import Annotated
 
 from fastapi import Depends, status
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
@@ -49,7 +50,7 @@ backfills_router = AirflowRouter(tags=["Backfill"], prefix="/backfills")
         Depends(requires_access_dag(method="GET")),
     ],
 )
-def list_backfills(
+def list_backfills_ui(
     limit: QueryLimit,
     offset: QueryOffset,
     order_by: Annotated[
@@ -64,7 +65,7 @@ def list_backfills(
     ],
 ) -> BackfillCollectionResponse:
     select_stmt, total_entries = paginated_select(
-        statement=select(Backfill),
+        statement=select(Backfill).options(joinedload(Backfill.dag_model)),
         filters=[dag_id, active],
         order_by=order_by,
         offset=offset,

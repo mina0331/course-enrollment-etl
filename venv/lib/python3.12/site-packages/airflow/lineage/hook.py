@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, TypeAlias
 
 import attr
 
@@ -29,11 +29,12 @@ from airflow.sdk.definitions.asset import Asset
 from airflow.utils.log.logging_mixin import LoggingMixin
 
 if TYPE_CHECKING:
-    from airflow.hooks.base import BaseHook
-    from airflow.sdk import ObjectStoragePath
+    from pydantic.types import JsonValue
+
+    from airflow.sdk import BaseHook, ObjectStoragePath
 
     # Store context what sent lineage.
-    LineageContext = Union[BaseHook, ObjectStoragePath]
+    LineageContext: TypeAlias = BaseHook | ObjectStoragePath
 
 _hook_lineage_collector: HookLineageCollector | None = None
 
@@ -108,7 +109,7 @@ class HookLineageCollector(LoggingMixin):
         name: str | None = None,
         group: str | None = None,
         asset_kwargs: dict | None = None,
-        asset_extra: dict | None = None,
+        asset_extra: dict[str, JsonValue] | None = None,
     ) -> Asset | None:
         """
         Create an asset instance using the provided parameters.
@@ -162,7 +163,7 @@ class HookLineageCollector(LoggingMixin):
         name: str | None = None,
         group: str | None = None,
         asset_kwargs: dict | None = None,
-        asset_extra: dict | None = None,
+        asset_extra: dict[str, JsonValue] | None = None,
     ):
         """Add the input asset and its corresponding hook execution context to the collector."""
         if len(self._inputs) >= MAX_COLLECTED_ASSETS:
@@ -187,7 +188,7 @@ class HookLineageCollector(LoggingMixin):
         name: str | None = None,
         group: str | None = None,
         asset_kwargs: dict | None = None,
-        asset_extra: dict | None = None,
+        asset_extra: dict[str, JsonValue] | None = None,
     ):
         """Add the output asset and its corresponding hook execution context to the collector."""
         if len(self._outputs) >= MAX_COLLECTED_ASSETS:

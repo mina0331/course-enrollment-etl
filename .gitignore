@@ -8,3 +8,12 @@ airflow/plugins/__pycache__/
 # Secrets
 .env
 .env.*
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local data
+/data/

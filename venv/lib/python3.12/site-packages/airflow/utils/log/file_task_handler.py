@@ -30,7 +30,7 @@ from enum import Enum
 from itertools import chain, islice
 from pathlib import Path
 from types import GeneratorType
-from typing import IO, TYPE_CHECKING, Optional, TypedDict, Union, cast
+from typing import IO, TYPE_CHECKING, TypedDict, cast
 from urllib.parse import urljoin
 
 import pendulum
@@ -47,12 +47,13 @@ from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.state import State, TaskInstanceState
 
 if TYPE_CHECKING:
+    from typing import TypeAlias
+
     from requests import Response
 
     from airflow.executors.base_executor import BaseExecutor
     from airflow.models.taskinstance import TaskInstance
     from airflow.models.taskinstancehistory import TaskInstanceHistory
-    from airflow.typing_compat import TypeAlias
 
 CHUNK_SIZE = 1024 * 1024 * 5  # 5MB
 DEFAULT_SORT_DATETIME = pendulum.datetime(2000, 1, 1)
@@ -79,14 +80,14 @@ LogResponseWithSize: TypeAlias = tuple[LogSourceInfo, list[RawLogStream], int]
 """Log response, containing source information, stream of log lines, and total log size."""
 StructuredLogStream: TypeAlias = Generator["StructuredLogMessage", None, None]
 """Structured log stream, containing structured log messages."""
-LogHandlerOutputStream: TypeAlias = Union[
-    StructuredLogStream, Iterator["StructuredLogMessage"], chain["StructuredLogMessage"]
-]
+LogHandlerOutputStream: TypeAlias = (
+    StructuredLogStream | Iterator["StructuredLogMessage"] | chain["StructuredLogMessage"]
+)
 """Output stream, containing structured log messages or a chain of them."""
-ParsedLog: TypeAlias = tuple[Optional[datetime], int, "StructuredLogMessage"]
+ParsedLog: TypeAlias = tuple[datetime | None, int, "StructuredLogMessage"]
 """Parsed log record, containing timestamp, line_num and the structured log message."""
 ParsedLogStream: TypeAlias = Generator[ParsedLog, None, None]
-LegacyProvidersLogType: TypeAlias = Union[list["StructuredLogMessage"], str, list[str]]
+LegacyProvidersLogType: TypeAlias = list["StructuredLogMessage"] | str | list[str]
 """Return type used by legacy `_read` methods for Alibaba Cloud, Elasticsearch, OpenSearch, and Redis log handlers.
 
 - For Elasticsearch and OpenSearch: returns either a list of structured log messages.
@@ -169,14 +170,14 @@ def _fetch_logs_from_service(url: str, log_relative_path: str) -> Response:
 
     from airflow.api_fastapi.auth.tokens import JWTGenerator, get_signing_key
 
-    timeout = conf.getint("webserver", "log_fetch_timeout_sec", fallback=None)
+    timeout = conf.getint("api", "log_fetch_timeout_sec", fallback=None)
     generator = JWTGenerator(
         secret_key=get_signing_key("api", "secret_key"),
         # Since we are using a secret key, we need to be explicit about the algorithm here too
         algorithm="HS512",
         # We must set an empty private key here as otherwise it can be automatically loaded by JWTGenerator
         # and secret_key and private_key cannot be set together
-        private_key=None,  #  type: ignore[arg-type]
+        private_key=None,  # type: ignore[arg-type]
         issuer=None,
         valid_for=conf.getint("webserver", "log_request_clock_grace", fallback=30),
         audience="task-instance-logs",
@@ -253,7 +254,7 @@ def _log_stream_to_parsed_log_stream(
     :param log_stream: The stream to parse.
     :return: A generator of parsed log lines.
     """
-    from airflow.utils.timezone import coerce_datetime
+    from airflow._shared.timezones.timezone import coerce_datetime
 
     timestamp = None
     next_timestamp = None
@@ -320,8 +321,6 @@ def _add_log_from_parsed_log_streams_to_heap(
                 log_stream_to_remove = []
             log_stream_to_remove.append(idx)
             continue
-        # add type hint to avoid mypy error
-        record = cast("ParsedLog", record)
         timestamp, line_num, line = record
         # take int as sort key to avoid overhead of memory usage
         heapq.heappush(heap, (_create_sort_key(timestamp, line_num), line))
@@ -742,12 +741,11 @@ class FileTaskHandler(logging.Handler):
         if try_number is None:
             try_number = task_instance.try_number
 
-        if try_number == 0 and task_instance.state == TaskInstanceState.SKIPPED:
-            logs = [
-                StructuredLogMessage(  # type: ignore[call-arg]
-                    event="Task was skipped, no logs available."
-                )
-            ]
+        if try_number == 0 and task_instance.state in (
+            TaskInstanceState.SKIPPED,
+            TaskInstanceState.UPSTREAM_FAILED,
+        ):
+            logs = [StructuredLogMessage(event="Task was skipped, no logs available.")]
             return chain(logs), {"end_of_log": True}
 
         if try_number is None or try_number < 1:
@@ -882,8 +880,8 @@ class FileTaskHandler(logging.Handler):
             if response.status_code == 403:
                 sources.append(
                     "!!!! Please make sure that all your Airflow components (e.g. "
-                    "schedulers, webservers, workers and triggerer) have "
-                    "the same 'secret_key' configured in 'webserver' section and "
+                    "schedulers, api-servers, dag-processors, workers and triggerer) have "
+                    "the same 'secret_key' configured in '[api]' section and "
                     "time is synchronized on all your machines (for example with ntpd)\n"
                     "See more at https://airflow.apache.org/docs/apache-airflow/"
                     "stable/configurations-ref.html#secret-key"

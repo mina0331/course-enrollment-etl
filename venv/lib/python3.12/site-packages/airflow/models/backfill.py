@@ -32,6 +32,7 @@ from sqlalchemy import (
     Column,
     ForeignKeyConstraint,
     Integer,
+    String,
     UniqueConstraint,
     desc,
     func,
@@ -41,10 +42,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy_jsonfield import JSONField
 
+from airflow._shared.timezones import timezone
 from airflow.exceptions import AirflowException, DagNotFound
 from airflow.models.base import Base, StringID
 from airflow.settings import json
-from airflow.utils import timezone
 from airflow.utils.session import create_session
 from airflow.utils.sqlalchemy import UtcDateTime, nulls_first, with_row_locks
 from airflow.utils.state import DagRunState
@@ -53,7 +54,7 @@ from airflow.utils.types import DagRunTriggeredByType, DagRunType
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from airflow.models.dag import DAG
+    from airflow.serialization.serialized_objects import SerializedDAG
     from airflow.timetables.base import DagRunInfo
 
 log = logging.getLogger(__name__)
@@ -132,8 +133,19 @@ class Backfill(Base):
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     completed_at = Column(UtcDateTime, nullable=True)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
+    triggering_user_name = Column(
+        String(512),
+        nullable=True,
+    )  # The user that triggered the Backfill, if applicable
 
     backfill_dag_run_associations = relationship("BackfillDagRun", back_populates="backfill")
+
+    dag_model = relationship(
+        "DagModel",
+        primaryjoin="DagModel.dag_id == Backfill.dag_id",
+        viewonly=True,
+        foreign_keys=[dag_id],
+    )
 
     def __repr__(self):
         return f"Backfill({self.dag_id=}, {self.from_date=}, {self.to_date=})"
@@ -272,12 +284,14 @@ def _do_dry_run(*, dag_id, from_date, to_date, reverse, reprocess_behavior, sess
 
 def _create_backfill_dag_run(
     *,
-    dag: DAG,
+    dag: SerializedDAG,
     info: DagRunInfo,
     reprocess_behavior: ReprocessBehavior,
     backfill_id,
     dag_run_conf,
     backfill_sort_ordinal,
+    triggering_user_name,
+    run_on_latest_version,
     session,
 ):
     from airflow.models.dagrun import DagRun
@@ -315,6 +329,7 @@ def _create_backfill_dag_run(
                     info=info,
                     backfill_id=backfill_id,
                     sort_ordinal=backfill_sort_ordinal,
+                    run_on_latest=run_on_latest_version,
                 )
             else:
                 session.add(
@@ -339,6 +354,7 @@ def _create_backfill_dag_run(
                 conf=dag_run_conf,
                 run_type=DagRunType.BACKFILL_JOB,
                 triggered_by=DagRunTriggeredByType.BACKFILL,
+                triggering_user_name=triggering_user_name,
                 state=DagRunState.QUEUED,
                 start_date=timezone.utcnow(),
                 backfill_id=backfill_id,
@@ -387,7 +403,7 @@ def _get_info_list(
     return dagrun_info_list
 
 
-def _handle_clear_run(session, dag, dr, info, backfill_id, sort_ordinal):
+def _handle_clear_run(session, dag, dr, info, backfill_id, sort_ordinal, run_on_latest=False):
     """Clear the existing DAG run and update backfill metadata."""
     from sqlalchemy.sql import update
 
@@ -399,8 +415,8 @@ def _handle_clear_run(session, dag, dr, info, backfill_id, sort_ordinal):
         run_id=dr.run_id,
         dag_run_state=DagRunState.QUEUED,
         session=session,
-        confirm_prompt=False,
         dry_run=False,
+        run_on_latest_version=run_on_latest,
     )
 
     # Update backfill_id and run_type in DagRun table
@@ -431,7 +447,9 @@ def _create_backfill(
     max_active_runs: int,
     reverse: bool,
     dag_run_conf: dict | None,
+    triggering_user_name: str | None,
     reprocess_behavior: ReprocessBehavior | None = None,
+    run_on_latest_version: bool = False,
 ) -> Backfill | None:
     from airflow.models import DagModel
     from airflow.models.serialized_dag import SerializedDagModel
@@ -468,6 +486,8 @@ def _create_backfill(
             max_active_runs=max_active_runs,
             dag_run_conf=dag_run_conf,
             reprocess_behavior=reprocess_behavior,
+            dag_model=dag,
+            triggering_user_name=triggering_user_name,
         )
         session.add(br)
         session.commit()
@@ -492,6 +512,8 @@ def _create_backfill(
                 dag_run_conf=br.dag_run_conf,
                 reprocess_behavior=br.reprocess_behavior,
                 backfill_sort_ordinal=backfill_sort_ordinal,
+                triggering_user_name=br.triggering_user_name,
+                run_on_latest_version=run_on_latest_version,
                 session=session,
             )
             log.info(

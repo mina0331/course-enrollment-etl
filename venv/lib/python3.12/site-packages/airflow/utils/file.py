@@ -83,13 +83,11 @@ class _RegexpIgnoreRule(NamedTuple):
 class _GlobIgnoreRule(NamedTuple):
     """Typed namedtuple with utility functions for glob ignore rules."""
 
-    pattern: Pattern
-    raw_pattern: str
-    include: bool | None = None
+    wild_match_pattern: GitWildMatchPattern
     relative_to: Path | None = None
 
     @staticmethod
-    def compile(pattern: str, _, definition_file: Path) -> _IgnoreRule | None:
+    def compile(pattern: str, base_dir: Path, definition_file: Path) -> _IgnoreRule | None:
         """Build an ignore rule from the supplied glob pattern and log a useful warning if it is invalid."""
         relative_to: Path | None = None
         if pattern.strip() == "/":
@@ -102,23 +100,28 @@ class _GlobIgnoreRule(NamedTuple):
             # > pattern is relative to the directory level of the particular .gitignore file itself.
             # > Otherwise the pattern may also match at any level below the .gitignore level.
             relative_to = definition_file.parent
+
         ignore_pattern = GitWildMatchPattern(pattern)
-        return _GlobIgnoreRule(ignore_pattern.regex, pattern, ignore_pattern.include, relative_to)
+        return _GlobIgnoreRule(wild_match_pattern=ignore_pattern, relative_to=relative_to)
 
     @staticmethod
     def match(path: Path, rules: list[_IgnoreRule]) -> bool:
-        """Match a list of ignore rules against the supplied path."""
+        """Match a list of ignore rules against the supplied path, accounting for exclusion rules and ordering."""
         matched = False
-        for r in rules:
-            if not isinstance(r, _GlobIgnoreRule):
-                raise ValueError(f"_GlobIgnoreRule cannot match rules of type: {type(r)}")
-            rule: _GlobIgnoreRule = r  # explicit typing to make mypy play nicely
-            rel_path = str(path.relative_to(rule.relative_to) if rule.relative_to else path.name)
-            if rule.raw_pattern.endswith("/") and path.is_dir():
-                # ensure the test path will potentially match a directory pattern if it is a directory
-                rel_path += "/"
-            if rule.include is not None and rule.pattern.match(rel_path) is not None:
-                matched = rule.include
+        for rule in rules:
+            if not isinstance(rule, _GlobIgnoreRule):
+                raise ValueError(f"_GlobIgnoreRule cannot match rules of type: {type(rule)}")
+            rel_obj = path.relative_to(rule.relative_to) if rule.relative_to else Path(path.name)
+            if path.is_dir():
+                rel_path = f"{rel_obj.as_posix()}/"
+            else:
+                rel_path = rel_obj.as_posix()
+            if (
+                rule.wild_match_pattern.include is not None
+                and rule.wild_match_pattern.match_file(rel_path) is not None
+            ):
+                matched = rule.wild_match_pattern.include
+
         return matched
 
 
@@ -184,23 +187,23 @@ def _find_path_from_directory(
         ignore_file_path = Path(root) / ignore_file_name
         if ignore_file_path.is_file():
             with open(ignore_file_path) as ifile:
-                lines_no_comments = [re.sub(r"\s*#.*", "", line) for line in ifile.read().split("\n")]
+                patterns_to_match_excluding_comments = [
+                    re.sub(r"\s*#.*", "", line) for line in ifile.read().split("\n")
+                ]
                 # append new patterns and filter out "None" objects, which are invalid patterns
                 patterns += [
                     p
                     for p in [
-                        ignore_rule_type.compile(line, Path(base_dir_path), ignore_file_path)
-                        for line in lines_no_comments
-                        if line
+                        ignore_rule_type.compile(pattern, Path(base_dir_path), ignore_file_path)
+                        for pattern in patterns_to_match_excluding_comments
+                        if pattern
                     ]
                     if p is not None
                 ]
                 # evaluation order of patterns is important with negation
                 # so that later patterns can override earlier patterns
-                patterns = list(dict.fromkeys(patterns))
 
         dirs[:] = [subdir for subdir in dirs if not ignore_rule_type.match(Path(root) / subdir, patterns)]
-
         # explicit loop for infinite recursion detection since we are following symlinks in this walk
         for sd in dirs:
             dirpath = (Path(root) / sd).resolve()

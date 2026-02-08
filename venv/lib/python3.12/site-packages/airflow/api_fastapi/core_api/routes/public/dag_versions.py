@@ -20,9 +20,10 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from airflow.api_fastapi.auth.managers.models.resource_details import DagAccessEntity
-from airflow.api_fastapi.common.dagbag import DagBagDep
+from airflow.api_fastapi.common.dagbag import DagBagDep, get_latest_version_of_dag
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
     FilterParam,
@@ -38,7 +39,6 @@ from airflow.api_fastapi.core_api.datamodels.dag_versions import (
 )
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.api_fastapi.core_api.security import requires_access_dag
-from airflow.models.dag import DAG
 from airflow.models.dag_version import DagVersion
 
 dag_versions_router = AirflowRouter(tags=["DagVersion"], prefix="/dags/{dag_id}/dagVersions")
@@ -59,7 +59,11 @@ def get_dag_version(
     session: SessionDep,
 ) -> DagVersionResponse:
     """Get one Dag Version."""
-    dag_version = session.scalar(select(DagVersion).filter_by(dag_id=dag_id, version_number=version_number))
+    dag_version = session.scalar(
+        select(DagVersion)
+        .filter_by(dag_id=dag_id, version_number=version_number)
+        .options(joinedload(DagVersion.dag_model))
+    )
 
     if dag_version is None:
         raise HTTPException(
@@ -104,13 +108,10 @@ def get_dag_versions(
 
     This endpoint allows specifying `~` as the dag_id to retrieve DAG Versions for all DAGs.
     """
-    query = select(DagVersion)
+    query = select(DagVersion).options(joinedload(DagVersion.dag_model), joinedload(DagVersion.bundle))
 
     if dag_id != "~":
-        dag: DAG = dag_bag.get_dag(dag_id)
-        if not dag:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, f"The DAG with dag_id: `{dag_id}` was not found")
-
+        get_latest_version_of_dag(dag_bag, dag_id, session)
         query = query.filter(DagVersion.dag_id == dag_id)
 
     dag_versions_select, total_entries = paginated_select(

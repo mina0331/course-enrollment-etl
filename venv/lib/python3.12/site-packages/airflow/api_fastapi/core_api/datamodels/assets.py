@@ -19,16 +19,25 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import AliasPath, ConfigDict, Field, JsonValue, NonNegativeInt, field_validator
 
+from airflow._shared.secrets_masker import redact
 from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
-from airflow.sdk.execution_time.secrets_masker import redact
 
 
 class DagScheduleAssetReference(StrictBaseModel):
     """DAG schedule reference serializer for assets."""
 
     dag_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskInletAssetReference(StrictBaseModel):
+    """Task inlet reference serializer for assets."""
+
+    dag_id: str
+    task_id: str
     created_at: datetime
     updated_at: datetime
 
@@ -42,6 +51,13 @@ class TaskOutletAssetReference(StrictBaseModel):
     updated_at: datetime
 
 
+class LastAssetEventResponse(BaseModel):
+    """Last asset event response serializer."""
+
+    id: NonNegativeInt | None = None
+    timestamp: datetime | None = None
+
+
 class AssetResponse(BaseModel):
     """Asset serializer for responses."""
 
@@ -49,12 +65,14 @@ class AssetResponse(BaseModel):
     name: str
     uri: str
     group: str
-    extra: dict | None = None
+    extra: dict[str, JsonValue] | None = None
     created_at: datetime
     updated_at: datetime
-    consuming_dags: list[DagScheduleAssetReference]
+    scheduled_dags: list[DagScheduleAssetReference]
     producing_tasks: list[TaskOutletAssetReference]
+    consuming_tasks: list[TaskInletAssetReference]
     aliases: list[AssetAliasResponse]
+    last_asset_event: LastAssetEventResponse | None = None
 
     @field_validator("extra", mode="after")
     @classmethod
@@ -105,7 +123,7 @@ class AssetEventResponse(BaseModel):
     uri: str | None = Field(alias="uri", default=None)
     name: str | None = Field(alias="name", default=None)
     group: str | None = Field(alias="group", default=None)
-    extra: dict | None = None
+    extra: dict[str, JsonValue] | None = None
     source_task_id: str | None = None
     source_dag_id: str | None = None
     source_run_id: str | None = None
@@ -132,6 +150,7 @@ class QueuedEventResponse(BaseModel):
     dag_id: str
     asset_id: int
     created_at: datetime
+    dag_display_name: str = Field(validation_alias=AliasPath("dag_model", "dag_display_name"))
 
 
 class QueuedEventCollectionResponse(BaseModel):
@@ -152,7 +171,4 @@ class CreateAssetEventsBody(StrictBaseModel):
         v["from_rest_api"] = True
         return v
 
-    class Config:
-        """Pydantic config."""
-
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")

@@ -25,9 +25,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pendulum
 
-from airflow.models.baseoperator import BaseOperator
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.sdk import dag, task
+from airflow.sdk import BaseOperator, dag, task
 
 if TYPE_CHECKING:
     from airflow.sdk import Context
@@ -52,11 +51,11 @@ class GetRequestOperator(BaseOperator):
     catchup=False,
     tags=["example"],
 )
-def example_dag_decorator(url: str = "http://httpbin.org/get"):
+def example_dag_decorator(url: str = "https://httpbingo.org/get"):
     """
     DAG to get IP address and echo it via BashOperator.
 
-    :param url: URL to get IP address from. Defaults to "http://httpbin.org/get".
+    :param url: URL to get IP address from. Defaults to "https://httpbingo.org/get".
     """
     get_ip = GetRequestOperator(task_id="get_ip", url=url)
 

@@ -22,8 +22,10 @@ import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useTimezone } from "src/context/timezone";
+import { DEFAULT_DATETIME_FORMAT } from "src/utils/datetimeUtils";
 import type { Option as TimezoneOption } from "src/utils/option";
 
 dayjs.extend(utc);
@@ -31,7 +33,9 @@ dayjs.extend(timezone);
 
 const TimezoneSelector: React.FC = () => {
   const { selectedTimezone, setSelectedTimezone } = useTimezone();
+  const { t: translate } = useTranslation("common");
   const [currentTime, setCurrentTime] = useState<string>("");
+
   const timezones = useMemo<Array<string>>(() => {
     const tzList = Intl.supportedValuesOf("timeZone");
     const guessedTz = dayjs.tz.guess();
@@ -43,10 +47,10 @@ const TimezoneSelector: React.FC = () => {
   const options = useMemo<Array<TimezoneOption>>(
     () =>
       timezones.map((tz) => ({
-        label: tz === "UTC" ? "UTC (Coordinated Universal Time)" : tz,
+        label: tz === "UTC" ? translate("timezoneModal.utc") : tz,
         value: tz,
       })),
-    [timezones],
+    [timezones, translate],
   );
 
   const handleTimezoneChange = (selectedOption: SingleValue<TimezoneOption>) => {
@@ -57,7 +61,7 @@ const TimezoneSelector: React.FC = () => {
 
   useEffect(() => {
     const updateTime = () => {
-      setCurrentTime(dayjs().tz(selectedTimezone).format("YYYY-MM-DD HH:mm:ss"));
+      setCurrentTime(dayjs().tz(selectedTimezone).format(DEFAULT_DATETIME_FORMAT));
     };
 
     updateTime();
@@ -73,13 +77,13 @@ const TimezoneSelector: React.FC = () => {
         <Select<TimezoneOption>
           onChange={handleTimezoneChange}
           options={options}
-          placeholder="Select a timezone"
+          placeholder={translate("timezoneModal.placeholder")}
           value={options.find((option) => option.value === selectedTimezone)}
         />
       </Field.Root>
       <Box borderRadius="md" boxShadow="sm" display="flex" flexDirection="column" gap={2} p={6}>
         <Text fontSize="lg" fontWeight="bold">
-          Current time in {selectedTimezone}:
+          {translate("timezoneModal.current-timezone")} {selectedTimezone}:
         </Text>
         <Text fontSize="2xl">{currentTime}</Text>
       </Box>

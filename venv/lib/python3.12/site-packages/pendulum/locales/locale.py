@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-from importlib import import_module, resources
 from pathlib import Path
 from typing import Any
 from typing import ClassVar
@@ -24,6 +23,8 @@ class Locale:
 
     @classmethod
     def load(cls, locale: str | Locale) -> Locale:
+        from importlib import import_module, resources
+
         if isinstance(locale, Locale):
             return locale
 
@@ -48,7 +49,7 @@ class Locale:
 
     @classmethod
     def normalize_locale(cls, locale: str) -> str:
-        m = re.match("([a-z]{2})[-_]([a-z]{2})", locale, re.I)
+        m = re.fullmatch("([a-z]{2})[-_]([a-z]{2})", locale, re.I)
         if m:
             return f"{m.group(1).lower()}_{m.group(2).lower()}"
         else:

@@ -140,7 +140,7 @@ def _parse_common(text: str, **options: Any) -> datetime | date | time:
 
     :param text: The string to parse.
     """
-    m = COMMON.match(text)
+    m = COMMON.fullmatch(text)
     has_date = False
     year = 0
     month = 1
@@ -212,6 +212,10 @@ def _parse_iso8601_interval(text: str) -> _Interval:
         raise ParserError("Invalid interval")
 
     first, last = text.split("/")
+
+    if not first or not last:
+        raise ParserError("Invalid interval.")
+
     start = end = duration = None
 
     if first[:1] == "P":

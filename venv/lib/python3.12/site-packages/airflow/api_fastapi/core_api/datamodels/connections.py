@@ -24,8 +24,8 @@ from typing import Annotated
 from pydantic import Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
+from airflow._shared.secrets_masker import redact
 from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
-from airflow.sdk.execution_time.secrets_masker import redact
 
 
 # Response Models
@@ -47,7 +47,7 @@ class ConnectionResponse(BaseModel):
     def redact_password(cls, v: str | None, field_info: ValidationInfo) -> str | None:
         if v is None:
             return None
-        return redact(v, field_info.field_name)
+        return str(redact(v, field_info.field_name))
 
     @field_validator("extra", mode="before")
     @classmethod

@@ -16,26 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { type ButtonGroupProps, IconButton, ButtonGroup } from "@chakra-ui/react";
-import { useMemo } from "react";
-import { MdExpand, MdCompress } from "react-icons/md";
-import { useParams } from "react-router-dom";
-import { useLocalStorage } from "usehooks-ts";
+import type { ButtonGroupProps } from "@chakra-ui/react";
+import { useTranslation } from "react-i18next";
 
+import { ExpandCollapseButtons } from "src/components/ExpandCollapseButtons";
 import { useOpenGroups } from "src/context/openGroups";
-import { useGridStructure } from "src/queries/useGridStructure.ts";
-
-import { flattenNodes } from "./Grid/utils";
 
 export const ToggleGroups = (props: ButtonGroupProps) => {
-  const { openGroupIds, setOpenGroupIds } = useOpenGroups();
-  const { dagId = "" } = useParams();
-  const [limit] = useLocalStorage<number>(`dag_runs_limit-${dagId}`, 10);
-  const { data: dagStructure } = useGridStructure({ limit });
-  const { allGroupIds } = useMemo(
-    () => flattenNodes(dagStructure, openGroupIds),
-    [dagStructure, openGroupIds],
-  );
+  const { t: translate } = useTranslation();
+  const { allGroupIds, openGroupIds, setOpenGroupIds } = useOpenGroups();
 
   // Don't show button if the DAG has no task groups
   if (!allGroupIds.length) {
@@ -53,28 +42,18 @@ export const ToggleGroups = (props: ButtonGroupProps) => {
     setOpenGroupIds([]);
   };
 
+  const expandLabel = translate("dag:taskGroups.expandAll");
+  const collapseLabel = translate("dag:taskGroups.collapseAll");
+
   return (
-    <ButtonGroup attached size="sm" variant="surface" {...props}>
-      <IconButton
-        aria-label="Expand all task groups"
-        disabled={isExpandDisabled}
-        onClick={onExpand}
-        size="sm"
-        title="Expand all task groups"
-        variant="surface"
-      >
-        <MdExpand />
-      </IconButton>
-      <IconButton
-        aria-label="Collapse all task groups"
-        disabled={isCollapseDisabled}
-        onClick={onCollapse}
-        size="sm"
-        title="Collapse all task groups"
-        variant="surface"
-      >
-        <MdCompress />
-      </IconButton>
-    </ButtonGroup>
+    <ExpandCollapseButtons
+      collapseLabel={collapseLabel}
+      expandLabel={expandLabel}
+      isCollapseDisabled={isCollapseDisabled}
+      isExpandDisabled={isExpandDisabled}
+      onCollapse={onCollapse}
+      onExpand={onExpand}
+      {...props}
+    />
   );
 };

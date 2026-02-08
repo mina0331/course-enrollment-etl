@@ -19,20 +19,22 @@
 import { createListCollection } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import ELK, { type ElkNode, type ElkExtendedEdge, type ElkShape } from "elkjs";
+import type { TFunction } from "i18next";
 
 import type { EdgeResponse, NodeResponse, StructureDataResponse } from "openapi/requests/types.gen";
 
 import { flattenGraph, formatFlowEdges } from "./reactflowUtils";
 
 export type Direction = "DOWN" | "LEFT" | "RIGHT" | "UP";
-export const directionOptions = createListCollection({
-  items: [
-    { label: "Left to Right", value: "RIGHT" as Direction },
-    { label: "Right to Left", value: "LEFT" as Direction },
-    { label: "Bottom to Top", value: "UP" as Direction },
-    { label: "Top to Bottom", value: "DOWN" as Direction },
-  ],
-});
+export const directionOptions = (translate: TFunction) =>
+  createListCollection({
+    items: [
+      { label: translate("graph.directionRight"), value: "RIGHT" as Direction },
+      { label: translate("graph.directionLeft"), value: "LEFT" as Direction },
+      { label: translate("graph.directionUp"), value: "UP" as Direction },
+      { label: translate("graph.directionDown"), value: "DOWN" as Direction },
+    ],
+  });
 
 type EdgeLabel = {
   height: number;
@@ -162,6 +164,7 @@ const generateElkGraph = ({
         label: node.label,
         layoutOptions: {
           "elk.padding": "[top=80,left=15,bottom=15,right=15]",
+          "elk.portConstraints": "FIXED_SIDE",
         },
       };
     }
@@ -212,6 +215,7 @@ const generateElkGraph = ({
       isGroup: Boolean(node.children),
       isMapped: node.is_mapped === null ? undefined : node.is_mapped,
       label: node.label,
+      layoutOptions: { "elk.portConstraints": "FIXED_SIDE" },
       operator: node.operator,
       setupTeardownType: node.setup_teardown_type,
       type: node.type,

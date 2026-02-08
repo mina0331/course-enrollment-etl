@@ -27,14 +27,15 @@ This should generally only be called by internal methods such as
 
 from __future__ import annotations
 
-import logging
 import traceback
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
+import structlog
 from sqlalchemy import delete, func, insert, select, tuple_, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import joinedload, load_only
 
+from airflow._shared.timezones.timezone import utcnow
 from airflow.assets.manager import asset_manager
 from airflow.models.asset import (
     AssetActive,
@@ -44,18 +45,21 @@ from airflow.models.asset import (
     DagScheduleAssetNameReference,
     DagScheduleAssetReference,
     DagScheduleAssetUriReference,
+    TaskInletAssetReference,
     TaskOutletAssetReference,
 )
-from airflow.models.dag import DAG, DagModel, DagOwnerAttributes, DagTag
+from airflow.models.dag import DagModel, DagOwnerAttributes, DagTag, get_run_data_interval
 from airflow.models.dagrun import DagRun
 from airflow.models.dagwarning import DagWarningType
 from airflow.models.errors import ParseImportError
 from airflow.models.trigger import Trigger
-from airflow.sdk.definitions.asset import Asset, AssetAlias, AssetNameRef, AssetUriRef
+from airflow.sdk import Asset, AssetAlias
+from airflow.sdk.definitions.asset import AssetNameRef, AssetUriRef, BaseAsset
+from airflow.serialization.enums import Encoding
+from airflow.serialization.serialized_objects import BaseSerialization, LazyDeserializedDAG, SerializedDAG
 from airflow.triggers.base import BaseEventTrigger
 from airflow.utils.retries import MAX_DB_RETRIES, run_with_db_retries
 from airflow.utils.sqlalchemy import with_row_locks
-from airflow.utils.timezone import utcnow
 from airflow.utils.types import DagRunType
 
 if TYPE_CHECKING:
@@ -65,20 +69,23 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import Select
 
     from airflow.models.dagwarning import DagWarning
-    from airflow.serialization.serialized_objects import MaybeSerializedDAG
     from airflow.typing_compat import Self
 
-log = logging.getLogger(__name__)
+AssetT = TypeVar("AssetT", bound=BaseAsset)
+
+log = structlog.get_logger(__name__)
 
 
 def _create_orm_dags(
-    bundle_name: str, dags: Iterable[MaybeSerializedDAG], *, session: Session
+    bundle_name: str,
+    dags: Iterable[LazyDeserializedDAG],
+    *,
+    session: Session,
 ) -> Iterator[DagModel]:
     for dag in dags:
-        orm_dag = DagModel(dag_id=dag.dag_id)
+        orm_dag = DagModel(dag_id=dag.dag_id, bundle_name=bundle_name)
         if dag.is_paused_upon_creation is not None:
             orm_dag.is_paused = dag.is_paused_upon_creation
-        orm_dag.bundle_name = bundle_name
         log.info("Creating ORM DAG for %s", dag.dag_id)
         session.add(orm_dag)
         yield orm_dag
@@ -129,7 +136,7 @@ class _RunInfo(NamedTuple):
     num_active_runs: dict[str, int]
 
     @classmethod
-    def calculate(cls, dags: dict[str, MaybeSerializedDAG], *, session: Session) -> Self:
+    def calculate(cls, dags: dict[str, LazyDeserializedDAG], *, session: Session) -> Self:
         """
         Query the the run counts from the db.
 
@@ -151,10 +158,32 @@ class _RunInfo(NamedTuple):
 
 def _update_dag_tags(tag_names: set[str], dm: DagModel, *, session: Session) -> None:
     orm_tags = {t.name: t for t in dm.tags}
+    tags_to_delete = []
     for name, orm_tag in orm_tags.items():
         if name not in tag_names:
             session.delete(orm_tag)
-    dm.tags.extend(DagTag(name=name, dag_id=dm.dag_id) for name in tag_names.difference(orm_tags))
+            tags_to_delete.append(orm_tag)
+
+    tags_to_add = tag_names.difference(orm_tags)
+    if tags_to_delete:
+        # Remove deleted tags from the collection to keep it in sync
+        for tag in tags_to_delete:
+            dm.tags.remove(tag)
+
+        # Check if there's a potential case-only rename on MySQL (e.g., 'tag' -> 'TAG').
+        # MySQL uses case-insensitive collation for the (name, dag_id) primary key by default,
+        # which can cause duplicate key errors when renaming tags with only case changes.
+        if session.bind.dialect.name == "mysql":
+            orm_tags_lower = {name.lower(): name for name in orm_tags}
+            has_case_only_change = any(tag.lower() in orm_tags_lower for tag in tags_to_add)
+
+            if has_case_only_change:
+                # Force DELETE operations to execute before INSERT operations.
+                session.flush()
+                # Refresh the tags relationship from the database to reflect the deletions.
+                session.expire(dm, ["tags"])
+
+    dm.tags.extend(DagTag(name=name, dag_id=dm.dag_id) for name in tags_to_add)
 
 
 def _update_dag_owner_links(dag_owner_links: dict[str, str], dm: DagModel, *, session: Session) -> None:
@@ -175,7 +204,7 @@ def _update_dag_owner_links(dag_owner_links: dict[str, str], dm: DagModel, *, se
 
 
 def _serialize_dag_capturing_errors(
-    dag: MaybeSerializedDAG, bundle_name, session: Session, bundle_version: str | None
+    dag: LazyDeserializedDAG, bundle_name, session: Session, bundle_version: str | None
 ):
     """
     Try to serialize the dag to the DB, but make a note of any errors.
@@ -208,11 +237,15 @@ def _serialize_dag_capturing_errors(
     except Exception:
         log.exception("Failed to write serialized DAG dag_id=%s fileloc=%s", dag.dag_id, dag.fileloc)
         dagbag_import_error_traceback_depth = conf.getint("core", "dagbag_import_error_traceback_depth")
-        # todo AIP-66: this needs to use bundle name / rel fileloc instead
-        return [(dag.fileloc, traceback.format_exc(limit=-dagbag_import_error_traceback_depth))]
+        return [
+            (
+                (bundle_name, dag.relative_fileloc),
+                traceback.format_exc(limit=-dagbag_import_error_traceback_depth),
+            )
+        ]
 
 
-def _sync_dag_perms(dag: MaybeSerializedDAG, session: Session):
+def _sync_dag_perms(dag: LazyDeserializedDAG, session: Session):
     """Sync DAG specific permissions."""
     dag_id = dag.dag_id
 
@@ -245,60 +278,80 @@ def _update_dag_warnings(
 
 
 def _update_import_errors(
-    files_parsed: set[str], bundle_name: str, import_errors: dict[str, str], session: Session
+    files_parsed: set[tuple[str, str]],
+    bundle_name: str,
+    import_errors: dict[tuple[str, str], str],
+    session: Session,
 ):
     from airflow.listeners.listener import get_listener_manager
 
-    # We can remove anything from files parsed in this batch that doesn't have an error. We need to remove old
-    # errors (i.e. from files that are removed) separately
-
-    session.execute(
-        delete(ParseImportError).where(
-            ParseImportError.filename.in_(list(files_parsed)), ParseImportError.bundle_name == bundle_name
-        )
-    )
-
+    # Check existing import errors BEFORE deleting, so we can determine if we should update or create
     existing_import_error_files = set(
-        session.execute(select(ParseImportError.filename, ParseImportError.bundle_name))
+        session.execute(select(ParseImportError.bundle_name, ParseImportError.filename))
     )
 
-    # Add the errors of the processed files
-    for filename, stacktrace in import_errors.items():
-        if (filename, bundle_name) in existing_import_error_files:
-            session.query(ParseImportError).where(
-                ParseImportError.filename == filename, ParseImportError.bundle_name == bundle_name
-            ).update(
-                {
-                    "filename": filename,
-                    "bundle_name": bundle_name,
-                    "timestamp": utcnow(),
-                    "stacktrace": stacktrace,
-                },
+    # Delete errors for files that were parsed but don't have errors in import_errors
+    # (i.e., files that were successfully parsed without errors)
+    files_to_clear = files_parsed.difference(import_errors)
+    if files_to_clear:
+        session.execute(
+            delete(ParseImportError).where(
+                tuple_(ParseImportError.bundle_name, ParseImportError.filename).in_(files_to_clear)
+            )
+        )
+
+    # Add or update the errors of the processed files
+    for key, stacktrace in import_errors.items():
+        bundle_name_, relative_fileloc = key
+
+        if key in existing_import_error_files:
+            session.execute(
+                update(ParseImportError)
+                .where(
+                    ParseImportError.filename == relative_fileloc,
+                    ParseImportError.bundle_name == bundle_name_,
+                )
+                .values(
+                    filename=relative_fileloc,
+                    bundle_name=bundle_name_,
+                    timestamp=utcnow(),
+                    stacktrace=stacktrace,
+                ),
             )
             # sending notification when an existing dag import error occurs
             try:
+                # todo: make listener accept bundle_name and relative_filename
+                import_error = session.scalar(
+                    select(ParseImportError).where(
+                        ParseImportError.bundle_name == bundle_name_,
+                        ParseImportError.filename == relative_fileloc,
+                    )
+                )
                 get_listener_manager().hook.on_existing_dag_import_error(
-                    filename=filename, stacktrace=stacktrace
+                    filename=import_error.full_file_path(), stacktrace=stacktrace
                 )
             except Exception:
                 log.exception("error calling listener")
         else:
-            session.add(
-                ParseImportError(
-                    filename=filename,
-                    bundle_name=bundle_name,
-                    timestamp=utcnow(),
-                    stacktrace=stacktrace,
-                )
+            import_error = ParseImportError(
+                filename=relative_fileloc,
+                bundle_name=bundle_name,
+                timestamp=utcnow(),
+                stacktrace=stacktrace,
             )
+            session.add(import_error)
             # sending notification when a new dag import error occurs
             try:
-                get_listener_manager().hook.on_new_dag_import_error(filename=filename, stacktrace=stacktrace)
+                get_listener_manager().hook.on_new_dag_import_error(
+                    filename=import_error.full_file_path(), stacktrace=stacktrace
+                )
             except Exception:
                 log.exception("error calling listener")
         session.execute(
             update(DagModel)
-            .where(DagModel.fileloc == filename)
+            .where(
+                DagModel.relative_fileloc == relative_fileloc,
+            )
             .values(
                 has_import_errors=True,
                 bundle_name=bundle_name,
@@ -311,12 +364,14 @@ def _update_import_errors(
 def update_dag_parsing_results_in_db(
     bundle_name: str,
     bundle_version: str | None,
-    dags: Collection[MaybeSerializedDAG],
-    import_errors: dict[str, str],
+    dags: Collection[LazyDeserializedDAG],
+    import_errors: dict[tuple[str, str], str],
+    parse_duration: float | None,
     warnings: set[DagWarning],
     session: Session,
     *,
     warning_types: tuple[DagWarningType] = (DagWarningType.NONEXISTENT_POOL,),
+    files_parsed: set[tuple[str, str]] | None = None,
 ):
     """
     Update everything to do with DAG parsing in the DB.
@@ -334,6 +389,10 @@ def update_dag_parsing_results_in_db(
     then all warnings and errors related to this file will be removed.
 
     ``import_errors`` will be updated in place with an new errors
+
+    :param files_parsed: Set of (bundle_name, relative_fileloc) tuples for all files that were parsed.
+        If None, will be inferred from dags and import_errors. Passing this explicitly ensures that
+        import errors are cleared for files that were parsed but no longer contain DAGs.
     """
     # Retry 'DAG.bulk_write_to_db' & 'SerializedDagModel.bulk_sync_to_db' in case
     # of any Operational Errors
@@ -348,12 +407,17 @@ def update_dag_parsing_results_in_db(
             )
             log.debug("Calling the DAG.bulk_sync_to_db method")
             try:
-                DAG.bulk_write_to_db(bundle_name, bundle_version, dags, session=session)
+                SerializedDAG.bulk_write_to_db(
+                    bundle_name, bundle_version, dags, parse_duration, session=session
+                )
                 # Write Serialized DAGs to DB, capturing errors
                 for dag in dags:
                     serialize_errors.extend(
                         _serialize_dag_capturing_errors(
-                            dag=dag, bundle_name=bundle_name, bundle_version=bundle_version, session=session
+                            dag=dag,
+                            bundle_name=bundle_name,
+                            bundle_version=bundle_version,
+                            session=session,
                         )
                     )
             except OperationalError:
@@ -361,16 +425,11 @@ def update_dag_parsing_results_in_db(
                 raise
             # Only now we are "complete" do we update import_errors - don't want to record errors from
             # previous failed attempts
-            import_errors.update(dict(serialize_errors))
-
+            import_errors.update(serialize_errors)
     # Record import errors into the ORM - we don't retry on this one as it's not as critical that it works
     try:
-        # TODO: This won't clear errors for files that exist that no longer contain DAGs. Do we need to pass
-        # in the list of file parsed?
-
-        good_dag_filelocs = {dag.fileloc for dag in dags if dag.fileloc not in import_errors}
         _update_import_errors(
-            files_parsed=good_dag_filelocs,
+            files_parsed=files_parsed if files_parsed is not None else set(),
             bundle_name=bundle_name,
             import_errors=import_errors,
             session=session,
@@ -390,7 +449,7 @@ def update_dag_parsing_results_in_db(
 class DagModelOperation(NamedTuple):
     """Collect DAG objects and perform database operations for them."""
 
-    dags: dict[str, MaybeSerializedDAG]
+    dags: dict[str, LazyDeserializedDAG]
     bundle_name: str
     bundle_version: str | None
 
@@ -422,17 +481,14 @@ class DagModelOperation(NamedTuple):
     def update_dags(
         self,
         orm_dags: dict[str, DagModel],
+        parse_duration: float | None,
         *,
         session: Session,
     ) -> None:
         from airflow.configuration import conf
 
         # we exclude backfill from active run counts since their concurrency is separate
-        run_info = _RunInfo.calculate(
-            dags=self.dags,
-            session=session,
-        )
-
+        run_info = _RunInfo.calculate(dags=self.dags, session=session)
         for dag_id, dm in sorted(orm_dags.items()):
             dag = self.dags[dag_id]
             dm.fileloc = dag.fileloc
@@ -441,6 +497,7 @@ class DagModelOperation(NamedTuple):
             dm.is_stale = False
             dm.has_import_errors = False
             dm.last_parsed_time = utcnow()
+            dm.last_parse_duration = parse_duration
             if hasattr(dag, "_dag_display_property_value"):
                 dm._dag_display_property_value = dag._dag_display_property_value
             elif dag.dag_display_name != dag.dag_id:
@@ -470,6 +527,9 @@ class DagModelOperation(NamedTuple):
             else:
                 dm.max_consecutive_failed_dag_runs = dag.max_consecutive_failed_dag_runs
 
+            if dag.deadline is not None:
+                dm.deadline = dag.deadline
+
             if hasattr(dag, "has_task_concurrency_limits"):
                 dm.has_task_concurrency_limits = dag.has_task_concurrency_limits
             else:
@@ -487,7 +547,7 @@ class DagModelOperation(NamedTuple):
             if last_automated_run is None:
                 last_automated_data_interval = None
             else:
-                last_automated_data_interval = dag.get_run_data_interval(last_automated_run)
+                last_automated_data_interval = get_run_data_interval(dag.timetable, last_automated_run)
             if run_info.num_active_runs.get(dag.dag_id, 0) >= dm.max_active_runs:
                 dm.next_dagrun_create_after = None
             else:
@@ -561,19 +621,41 @@ class DagModelOperation(NamedTuple):
             dm.asset_expression = asset_expression
 
 
-def _find_all_assets(dags: Iterable[MaybeSerializedDAG]) -> Iterator[Asset]:
+def _get_task_ports(data: dict, inlets: bool, outlets: bool) -> Iterable[str]:
+    if inlets:
+        yield from data.get("inlets") or ()
+    if outlets:
+        yield from data.get("outlets") or ()
+
+
+def _get_dag_assets(
+    dag: LazyDeserializedDAG,
+    of: type[AssetT],
+    *,
+    inlets: bool = True,
+    outlets: bool = True,
+) -> Iterable[tuple[str, AssetT]]:
+    for task in dag.data["dag"]["tasks"]:
+        task = task[Encoding.VAR]
+        ports = _get_task_ports(task["partial_kwargs"] if task.get("_is_mapped") else task, inlets, outlets)
+        for port in ports:
+            if isinstance(obj := BaseSerialization.deserialize(port), of):
+                yield task["task_id"], obj
+
+
+def _find_all_assets(dags: Iterable[LazyDeserializedDAG]) -> Iterator[Asset]:
     for dag in dags:
         for _, asset in dag.timetable.asset_condition.iter_assets():
             yield asset
-        for _, asset in dag.get_task_assets(of_type=Asset):
+        for _, asset in _get_dag_assets(dag, of=Asset):
             yield asset
 
 
-def _find_all_asset_aliases(dags: Iterable[MaybeSerializedDAG]) -> Iterator[AssetAlias]:
+def _find_all_asset_aliases(dags: Iterable[LazyDeserializedDAG]) -> Iterator[AssetAlias]:
     for dag in dags:
         for _, alias in dag.timetable.asset_condition.iter_asset_aliases():
             yield alias
-        for _, alias in dag.get_task_assets(of_type=AssetAlias):
+        for _, alias in _get_dag_assets(dag, of=AssetAlias):
             yield alias
 
 
@@ -583,7 +665,7 @@ def _find_active_assets(name_uri_assets: Iterable[tuple[str, str]], session: Ses
             select(AssetModel.name, AssetModel.uri).where(
                 tuple_(AssetModel.name, AssetModel.uri).in_(name_uri_assets),
                 AssetModel.active.has(),
-                AssetModel.consuming_dags.any(
+                AssetModel.scheduled_dags.any(
                     DagScheduleAssetReference.dag.has(~DagModel.is_stale & ~DagModel.is_paused)
                 ),
             )
@@ -598,12 +680,13 @@ class AssetModelOperation(NamedTuple):
     schedule_asset_alias_references: dict[str, list[AssetAlias]]
     schedule_asset_name_references: set[tuple[str, str]]  # dag_id, ref_name.
     schedule_asset_uri_references: set[tuple[str, str]]  # dag_id, ref_uri.
+    inlet_references: dict[str, list[tuple[str, Asset]]]
     outlet_references: dict[str, list[tuple[str, Asset]]]
     assets: dict[tuple[str, str], Asset]
     asset_aliases: dict[str, AssetAlias]
 
     @classmethod
-    def collect(cls, dags: dict[str, MaybeSerializedDAG]) -> Self:
+    def collect(cls, dags: dict[str, LazyDeserializedDAG]) -> Self:
         coll = cls(
             schedule_asset_references={
                 dag_id: [asset for _, asset in dag.timetable.asset_condition.iter_assets()]
@@ -625,8 +708,13 @@ class AssetModelOperation(NamedTuple):
                 for ref in dag.timetable.asset_condition.iter_asset_refs()
                 if isinstance(ref, AssetUriRef)
             },
+            inlet_references={
+                dag_id: list(_get_dag_assets(dag, Asset, inlets=True, outlets=False))
+                for dag_id, dag in dags.items()
+            },
             outlet_references={
-                dag_id: list(dag.get_task_assets(inlets=False, outlets=True)) for dag_id, dag in dags.items()
+                dag_id: list(_get_dag_assets(dag, Asset, inlets=False, outlets=True))
+                for dag_id, dag in dags.items()
             },
             assets={(asset.name, asset.uri): asset for asset in _find_all_assets(dags.values())},
             asset_aliases={alias.name: alias for alias in _find_all_asset_aliases(dags.values())},
@@ -804,6 +892,24 @@ class AssetModelOperation(NamedTuple):
         # Optimization: No assets means there are no references to update.
         if not assets:
             return
+        for dag_id, references in self.inlet_references.items():
+            # Optimization: no references at all; this is faster than repeated delete().
+            if not references:
+                dags[dag_id].task_inlet_asset_references = []
+                continue
+            referenced_inlets = {
+                (task_id, asset.id)
+                for task_id, asset in ((task_id, assets[d.name, d.uri]) for task_id, d in references)
+            }
+            orm_refs = {(r.task_id, r.asset_id): r for r in dags[dag_id].task_inlet_asset_references}
+            for key, ref in orm_refs.items():
+                if key not in referenced_inlets:
+                    session.delete(ref)
+            session.bulk_save_objects(
+                TaskInletAssetReference(asset_id=asset_id, dag_id=dag_id, task_id=task_id)
+                for task_id, asset_id in referenced_inlets
+                if (task_id, asset_id) not in orm_refs
+            )
         for dag_id, references in self.outlet_references.items():
             # Optimization: no references at all; this is faster than repeated delete().
             if not references:
@@ -924,7 +1030,7 @@ class AssetModelOperation(NamedTuple):
 
         # Remove references from assets no longer used
         orphan_assets = session.scalars(
-            select(AssetModel).filter(~AssetModel.consuming_dags.any()).filter(AssetModel.triggers.any())
+            select(AssetModel).filter(~AssetModel.scheduled_dags.any()).filter(AssetModel.triggers.any())
         )
         for asset_model in orphan_assets:
             if (asset_model.name, asset_model.uri) not in self.assets:

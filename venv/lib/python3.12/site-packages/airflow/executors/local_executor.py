@@ -30,20 +30,24 @@ import logging
 import multiprocessing
 import multiprocessing.sharedctypes
 import os
+import sys
 from multiprocessing import Queue, SimpleQueue
-from typing import TYPE_CHECKING, Optional
-
-from setproctitle import setproctitle
+from typing import TYPE_CHECKING
 
 from airflow.executors import workloads
-from airflow.executors.base_executor import PARALLELISM, BaseExecutor
-from airflow.utils.session import NEW_SESSION, provide_session
+from airflow.executors.base_executor import BaseExecutor
 from airflow.utils.state import TaskInstanceState
 
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+# add logger to parameter of setproctitle to support logging
+if sys.platform == "darwin":
+    setproctitle = lambda title, logger: logger.debug("Mac OS detected, skipping setproctitle")
+else:
+    from setproctitle import setproctitle as real_setproctitle
 
-    TaskInstanceStateType = tuple[workloads.TaskInstance, TaskInstanceState, Optional[Exception]]
+    setproctitle = lambda title, logger: real_setproctitle(title)
+
+if TYPE_CHECKING:
+    TaskInstanceStateType = tuple[workloads.TaskInstance, TaskInstanceState, Exception | None]
 
 
 def _run_worker(
@@ -61,7 +65,7 @@ def _run_worker(
     log.info("Worker starting up pid=%d", os.getpid())
 
     while True:
-        setproctitle("airflow worker -- LocalExecutor: <idle>")
+        setproctitle("airflow worker -- LocalExecutor: <idle>", log)
         try:
             workload = input.get()
         except EOFError:
@@ -107,7 +111,7 @@ def _execute_work(log: logging.Logger, workload: workloads.ExecuteTask) -> None:
     from airflow.configuration import conf
     from airflow.sdk.execution_time.supervisor import supervise
 
-    setproctitle(f"airflow worker -- LocalExecutor: {workload.ti.id}")
+    setproctitle(f"airflow worker -- LocalExecutor: {workload.ti.id}", log)
 
     base_url = conf.get("api", "base_url", fallback="/")
     # If it's a relative URL, use localhost:8080 as the default
@@ -134,10 +138,11 @@ class LocalExecutor(BaseExecutor):
 
     It uses the multiprocessing Python library and queues to parallelize the execution of tasks.
 
-    :param parallelism: how many parallel processes are run in the executor
+    :param parallelism: how many parallel processes are run in the executor, must be > 0
     """
 
     is_local: bool = True
+    is_mp_using_fork: bool = multiprocessing.get_start_method() == "fork"
 
     serve_logs: bool = True
 
@@ -145,11 +150,6 @@ class LocalExecutor(BaseExecutor):
     result_queue: SimpleQueue[TaskInstanceStateType]
     workers: dict[int, multiprocessing.Process]
     _unread_messages: multiprocessing.sharedctypes.Synchronized[int]
-
-    def __init__(self, parallelism: int = PARALLELISM):
-        super().__init__(parallelism=parallelism)
-        if self.parallelism < 0:
-            raise ValueError("parallelism must be greater than or equal to 0")
 
     def start(self) -> None:
         """Start the executor."""
@@ -162,7 +162,12 @@ class LocalExecutor(BaseExecutor):
 
         # Mypy sees this value as `SynchronizedBase[c_uint]`, but that isn't the right runtime type behaviour
         # (it looks like an int to python)
-        self._unread_messages = multiprocessing.Value(ctypes.c_uint)  # type: ignore[assignment]
+        self._unread_messages = multiprocessing.Value(ctypes.c_uint)
+
+        if self.is_mp_using_fork:
+            # This creates the maximum number of worker processes (parallelism) at once
+            # to minimize gc freeze/unfreeze cycles when using fork in multiprocessing
+            self._spawn_workers_with_gc_freeze(self.parallelism)
 
     def _check_workers(self):
         # Reap any dead workers
@@ -186,10 +191,15 @@ class LocalExecutor(BaseExecutor):
         # If we're using spawn in multiprocessing (default on macOS now) to start tasks, this can get called a
         # via `sync()` a few times before the spawned process actually starts picking up messages. Try not to
         # create too much
-        if num_outstanding and (self.parallelism == 0 or len(self.workers) < self.parallelism):
-            # This only creates one worker, which is fine as we call this directly after putting a message on
-            # activity_queue in execute_async
-            self._spawn_worker()
+        if num_outstanding and len(self.workers) < self.parallelism:
+            if self.is_mp_using_fork:
+                # This creates the maximum number of worker processes at once
+                # to minimize gc freeze/unfreeze cycles when using fork in multiprocessing
+                self._spawn_workers_with_gc_freeze(self.parallelism - len(self.workers))
+            else:
+                # This only creates one worker, which is fine as we call this directly after putting a message on
+                # activity_queue in execute_async when using spawn in multiprocessing
+                self._spawn_worker()
 
     def _spawn_worker(self):
         p = multiprocessing.Process(
@@ -205,6 +215,26 @@ class LocalExecutor(BaseExecutor):
         if TYPE_CHECKING:
             assert p.pid  # Since we've called start
         self.workers[p.pid] = p
+
+    def _spawn_workers_with_gc_freeze(self, spawn_number):
+        """
+        Freeze the GC before forking worker process and unfreeze it after forking.
+
+        This is done to prevent memory increase due to COW (Copy-on-Write) by moving all
+        existing objects to the permanent generation before forking the process. After forking,
+        unfreeze is called to ensure there is no impact on gc operations
+        in the original running process.
+
+        Ref: https://docs.python.org/3/library/gc.html#gc.freeze
+        """
+        import gc
+
+        gc.freeze()
+        try:
+            for _ in range(spawn_number):
+                self._spawn_worker()
+        finally:
+            gc.unfreeze()
 
     def sync(self) -> None:
         """Sync will get called periodically by the heartbeat method."""
@@ -246,9 +276,10 @@ class LocalExecutor(BaseExecutor):
     def terminate(self):
         """Terminate the executor is not doing anything."""
 
-    @provide_session
-    def queue_workload(self, workload: workloads.All, session: Session = NEW_SESSION):
-        self.activity_queue.put(workload)
+    def _process_workloads(self, workloads):
+        for workload in workloads:
+            self.activity_queue.put(workload)
+            del self.queued_tasks[workload.ti.key]
         with self._unread_messages:
-            self._unread_messages.value += 1
+            self._unread_messages.value += len(workloads)
         self._check_workers()

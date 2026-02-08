@@ -21,9 +21,9 @@ import json
 
 from pydantic import Field, JsonValue, model_validator
 
+from airflow._shared.secrets_masker import redact
 from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
 from airflow.models.base import ID_LEN
-from airflow.sdk.execution_time.secrets_masker import redact
 from airflow.typing_compat import Self
 
 
@@ -46,7 +46,7 @@ class VariableResponse(BaseModel):
             return self
         except json.JSONDecodeError:
             # value is not a serialized string representation of a dict.
-            self.val = redact(self.val, self.key)
+            self.val = str(redact(self.val, self.key))
             return self
 
 

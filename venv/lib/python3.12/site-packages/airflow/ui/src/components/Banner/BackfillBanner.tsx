@@ -18,16 +18,19 @@
  */
 import { Box, HStack, Spacer, Text, type ButtonProps } from "@chakra-ui/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { MdPause, MdPlayArrow, MdStop } from "react-icons/md";
 import { RiArrowGoBackFill } from "react-icons/ri";
 
 import {
   useBackfillServiceCancelBackfill,
-  useBackfillServiceListBackfills1,
-  useBackfillServiceListBackfills1Key,
+  useBackfillServiceListBackfillsUi,
+  useBackfillServiceListBackfillsUiKey,
   useBackfillServicePauseBackfill,
   useBackfillServiceUnpauseBackfill,
 } from "openapi/queries";
+import type { BackfillResponse } from "openapi/requests/types.gen";
+import { useAutoRefresh } from "src/utils";
 
 import Time from "../Time";
 import { Button, ProgressBar } from "../ui";
@@ -37,24 +40,36 @@ type Props = {
 };
 
 const buttonProps = {
-  _hover: { bg: "blue.contrast", color: "blue.muted" },
-  borderColor: "blue.contrast",
-  color: "blue.contrast",
+  _hover: { bg: "info.contrast", color: "info.muted" },
+  borderColor: "info.contrast",
+  color: "info.contrast",
   rounded: "full",
   size: "xs",
   variant: "outline",
 } satisfies ButtonProps;
 
 const BackfillBanner = ({ dagId }: Props) => {
-  const { data, isLoading } = useBackfillServiceListBackfills1({
-    dagId,
-  });
-  const [backfill] = data?.backfills.filter((bf) => bf.completed_at === null) ?? [];
+  const { t: translate } = useTranslation("components");
+  const refetchInterval = useAutoRefresh({ dagId });
+
+  const { data, isLoading } = useBackfillServiceListBackfillsUi(
+    {
+      dagId,
+    },
+    undefined,
+    {
+      refetchInterval: (query) =>
+        query.state.data?.backfills.some((bf: BackfillResponse) => bf.completed_at === null && !bf.is_paused)
+          ? refetchInterval
+          : false,
+    },
+  );
+  const [backfill] = data?.backfills.filter((bf: BackfillResponse) => bf.completed_at === null) ?? [];
 
   const queryClient = useQueryClient();
   const onSuccess = async () => {
     await queryClient.invalidateQueries({
-      queryKey: [useBackfillServiceListBackfills1Key],
+      queryKey: [useBackfillServiceListBackfillsUiKey],
     });
   };
 
@@ -62,7 +77,6 @@ const BackfillBanner = ({ dagId }: Props) => {
   const { isPending: isUnPausePending, mutate: unpauseMutate } = useBackfillServiceUnpauseBackfill({
     onSuccess,
   });
-
   const { isPending: isStopPending, mutate: stopPending } = useBackfillServiceCancelBackfill({ onSuccess });
 
   const togglePause = () => {
@@ -88,10 +102,10 @@ const BackfillBanner = ({ dagId }: Props) => {
   }
 
   return (
-    <Box bg="blue.solid" borderRadius="full" color="blue.contrast" my="1" px="2" py="1">
+    <Box bg="info.solid" borderRadius="full" color="info.contrast" my="1" px="2" py="1">
       <HStack alignItems="center" ml={3}>
         <RiArrowGoBackFill />
-        <Text key="backfill">Backfill in progress:</Text>
+        <Text key="backfill">{translate("banner.backfillInProgress")}:</Text>
         <Text fontSize="sm">
           {" "}
           <Time datetime={data?.backfills[0]?.from_date} /> - <Time datetime={data?.backfills[0]?.to_date} />
@@ -100,7 +114,7 @@ const BackfillBanner = ({ dagId }: Props) => {
         <Spacer flex="max-content" />
         <ProgressBar size="xs" visibility="visible" />
         <Button
-          aria-label={backfill.is_paused ? "Unpause backfill" : "Pause backfill"}
+          aria-label={backfill.is_paused ? translate("banner.unpause") : translate("banner.pause")}
           loading={isPausePending || isUnPausePending}
           onClick={() => {
             togglePause();
@@ -110,7 +124,7 @@ const BackfillBanner = ({ dagId }: Props) => {
           {backfill.is_paused ? <MdPlayArrow /> : <MdPause />}
         </Button>
         <Button
-          aria-label="Cancel backfill"
+          aria-label={translate("banner.cancel")}
           loading={isStopPending}
           onClick={() => {
             cancel();

@@ -38,8 +38,8 @@ from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import relationship
 from sqlalchemy_utils import UUIDType
 
+from airflow._shared.timezones import timezone
 from airflow.models.base import Base, StringID
-from airflow.utils import timezone
 from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.span_status import SpanStatus
 from airflow.utils.sqlalchemy import (
@@ -116,9 +116,9 @@ class TaskInstanceHistory(Base):
 
     dag_run = relationship(
         "DagRun",
-        primaryjoin="TaskInstanceHistory.run_id == DagRun.run_id",
+        primaryjoin="and_(TaskInstanceHistory.run_id == DagRun.run_id, DagRun.dag_id == TaskInstanceHistory.dag_id)",
         viewonly=True,
-        foreign_keys=[run_id],
+        foreign_keys=[run_id, dag_id],
     )
 
     def __init__(

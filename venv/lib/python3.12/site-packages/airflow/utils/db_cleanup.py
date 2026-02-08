@@ -36,10 +36,10 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.expression import ClauseElement, Executable, tuple_
 
+from airflow._shared.timezones import timezone
 from airflow.cli.simple_table import AirflowConsole
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException
-from airflow.utils import timezone
 from airflow.utils.db import reflect_tables
 from airflow.utils.helpers import ask_yesno
 from airflow.utils.session import NEW_SESSION, provide_session
@@ -149,7 +149,7 @@ config_list: list[_TableConfig] = [
         recency_column_name="created_at",
         dependent_tables=["task_instance", "dag_run"],
     ),
-    _TableConfig(table_name="deadline", recency_column_name="deadline"),
+    _TableConfig(table_name="deadline", recency_column_name="deadline_time"),
 ]
 
 # We need to have `fallback="database"` because this is executed at top level code and provider configuration
@@ -166,13 +166,14 @@ config_dict: dict[str, _TableConfig] = {x.orm_model.name: x for x in sorted(conf
 def _check_for_rows(*, query: Query, print_rows: bool = False) -> int:
     num_entities = query.count()
     print(f"Found {num_entities} rows meeting deletion criteria.")
-    if print_rows:
-        max_rows_to_print = 100
-        if num_entities > 0:
-            print(f"Printing first {max_rows_to_print} rows.")
-        logger.debug("print entities query: %s", query)
-        for entry in query.limit(max_rows_to_print):
-            print(entry.__dict__)
+    if not print_rows or num_entities == 0:
+        return num_entities
+
+    max_rows_to_print = 100
+    print(f"Printing first {max_rows_to_print} rows.")
+    logger.debug("print entities query: %s", query)
+    for entry in query.limit(max_rows_to_print):
+        print(entry.__dict__)
     return num_entities
 
 
@@ -182,66 +183,90 @@ def _dump_table_to_file(*, target_table: str, file_path: str, export_format: str
             csv_writer = csv.writer(f)
             cursor = session.execute(text(f"SELECT * FROM {target_table}"))
             csv_writer.writerow(cursor.keys())
-            csv_writer.writerows(cursor.fetchall())
+            BATCH_SIZE = 500
+            rows = cursor.fetchmany(BATCH_SIZE)
+            while rows:
+                csv_writer.writerows(rows)
+                rows = cursor.fetchmany(BATCH_SIZE)
     else:
         raise AirflowException(f"Export format {export_format} is not supported.")
 
 
-def _do_delete(*, query: Query, orm_model: Base, skip_archive: bool, session: Session) -> None:
+def _do_delete(
+    *, query: Query, orm_model: Base, skip_archive: bool, session: Session, batch_size: int | None
+) -> None:
+    import itertools
     import re
 
-    print("Performing Delete...")
-    # using bulk delete
-    # create a new table and copy the rows there
-    timestamp_str = re.sub(r"[^\d]", "", timezone.utcnow().isoformat())[:14]
-    target_table_name = f"{ARCHIVE_TABLE_PREFIX}{orm_model.name}__{timestamp_str}"
-    print(f"Moving data to table {target_table_name}")
     bind = session.get_bind()
     dialect_name = bind.dialect.name
-    target_table = None
-    try:
-        if dialect_name == "mysql":
-            # MySQL with replication needs this split into two queries, so just do it for all MySQL
-            # ERROR 1786 (HY000): Statement violates GTID consistency: CREATE TABLE ... SELECT.
-            session.execute(text(f"CREATE TABLE {target_table_name} LIKE {orm_model.name}"))
-            metadata = reflect_tables([target_table_name], session)
-            target_table = metadata.tables[target_table_name]
-            insert_stm = target_table.insert().from_select(target_table.c, query)
-            logger.debug("insert statement:\n%s", insert_stm.compile())
-            session.execute(insert_stm)
-        else:
-            stmt = CreateTableAs(target_table_name, query.selectable)
-            logger.debug("ctas query:\n%s", stmt.compile())
-            session.execute(stmt)
-        session.commit()
+    batch_counter = itertools.count(1)
 
-        # delete the rows from the old table
-        metadata = reflect_tables([orm_model.name, target_table_name], session)
-        source_table = metadata.tables[orm_model.name]
-        target_table = metadata.tables[target_table_name]
-        logger.debug("rows moved; purging from %s", source_table.name)
-        if dialect_name == "sqlite":
-            pk_cols = source_table.primary_key.columns
-            delete = source_table.delete().where(
-                tuple_(*pk_cols).in_(
-                    select(*[target_table.c[x.name] for x in source_table.primary_key.columns])
-                )
-            )
+    while True:
+        limited_query = query.limit(batch_size) if batch_size else query
+        if limited_query.count() == 0:  # nothing left to delete
+            break
+
+        batch_no = next(batch_counter)
+        suffix = f"__b{batch_no}" if batch_size else ""
+
+        if batch_size:
+            print(f"Performing Delete (batch {batch_no}, max {batch_size} rows)...")
         else:
-            delete = source_table.delete().where(
-                and_(col == target_table.c[col.name] for col in source_table.primary_key.columns)
-            )
-        logger.debug("delete statement:\n%s", delete.compile())
-        session.execute(delete)
-        session.commit()
-    except BaseException as e:
-        raise e
-    finally:
-        if target_table is not None and skip_archive:
-            bind = session.get_bind()
-            target_table.drop(bind=bind)
+            print("Performing Delete...")
+
+        # using bulk delete
+        # create a new table and copy the rows there
+        timestamp_str = re.sub(r"[^\d]", "", timezone.utcnow().isoformat())[:14]
+        target_table_name = f"{ARCHIVE_TABLE_PREFIX}{orm_model.name}__{timestamp_str}{suffix}"
+        print(f"Moving data to table {target_table_name}")
+        target_table = None
+
+        try:
+            if dialect_name == "mysql":
+                # MySQL with replication needs this split into two queries, so just do it for all MySQL
+                # ERROR 1786 (HY000): Statement violates GTID consistency: CREATE TABLE ... SELECT.
+                session.execute(text(f"CREATE TABLE {target_table_name} LIKE {orm_model.name}"))
+                metadata = reflect_tables([target_table_name], session)
+                target_table = metadata.tables[target_table_name]
+                insert_stm = target_table.insert().from_select(target_table.c, limited_query)
+                logger.debug("insert statement:\n%s", insert_stm.compile())
+                session.execute(insert_stm)
+            else:
+                stmt = CreateTableAs(target_table_name, limited_query.selectable)
+                logger.debug("ctas query:\n%s", stmt.compile())
+                session.execute(stmt)
             session.commit()
-            print("Finished Performing Delete")
+
+            # delete the rows from the old table
+            metadata = reflect_tables([orm_model.name, target_table_name], session)
+            source_table = metadata.tables[orm_model.name]
+            target_table = metadata.tables[target_table_name]
+            logger.debug("rows moved; purging from %s", source_table.name)
+            if dialect_name == "sqlite":
+                pk_cols = source_table.primary_key.columns
+                delete = source_table.delete().where(
+                    tuple_(*pk_cols).in_(
+                        select(*[target_table.c[x.name] for x in source_table.primary_key.columns])
+                    )
+                )
+            else:
+                delete = source_table.delete().where(
+                    and_(col == target_table.c[col.name] for col in source_table.primary_key.columns)
+                )
+            logger.debug("delete statement:\n%s", delete.compile())
+            session.execute(delete)
+            session.commit()
+
+        except BaseException as e:
+            raise e
+        finally:
+            if target_table is not None and skip_archive:
+                bind = session.get_bind()
+                target_table.drop(bind=bind)
+                session.commit()
+
+    print("Finished Performing Delete")
 
 
 def _subquery_keep_last(
@@ -324,6 +349,7 @@ def _cleanup_table(
     verbose: bool = False,
     skip_archive: bool = False,
     session: Session,
+    batch_size: int | None = None,
     **kwargs,
 ) -> None:
     print()
@@ -343,7 +369,13 @@ def _cleanup_table(
     num_rows = _check_for_rows(query=query, print_rows=False)
 
     if num_rows and not dry_run:
-        _do_delete(query=query, orm_model=orm_model, skip_archive=skip_archive, session=session)
+        _do_delete(
+            query=query,
+            orm_model=orm_model,
+            skip_archive=skip_archive,
+            session=session,
+            batch_size=batch_size,
+        )
 
     session.commit()
 
@@ -391,11 +423,7 @@ def _print_config(*, configs: dict[str, _TableConfig]) -> None:
 
 @contextmanager
 def _suppress_with_logging(table: str, session: Session):
-    """
-    Suppresses errors but logs them.
-
-    Also stores the exception instance so it can be referred to after exiting context.
-    """
+    """Suppresses errors but logs them."""
     try:
         yield
     except (OperationalError, ProgrammingError):
@@ -470,6 +498,7 @@ def run_cleanup(
     confirm: bool = True,
     skip_archive: bool = False,
     session: Session = NEW_SESSION,
+    batch_size: int | None = None,
 ) -> None:
     """
     Purges old records in airflow metadata database.
@@ -487,8 +516,9 @@ def run_cleanup(
     :param dry_run: If true, print rows meeting deletion criteria
     :param verbose: If true, may provide more detailed output.
     :param confirm: Require user input to confirm before processing deletions.
-    :param skip_archive: Set to True if you don't want the purged rows preservied in an archive table.
+    :param skip_archive: Set to True if you don't want the purged rows preserved in an archive table.
     :param session: Session representing connection to the metadata database.
+    :param batch_size: Maximum number of rows to delete or archive in a single transaction.
     """
     clean_before_timestamp = timezone.coerce_datetime(clean_before_timestamp)
 
@@ -515,6 +545,7 @@ def run_cleanup(
                     **table_config.__dict__,
                     skip_archive=skip_archive,
                     session=session,
+                    batch_size=batch_size,
                 )
                 session.commit()
         else:

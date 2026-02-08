@@ -22,11 +22,12 @@ from typing import TYPE_CHECKING
 
 import uuid6
 from sqlalchemy import Column, ForeignKey, Integer, UniqueConstraint, select
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import joinedload, relationship
 from sqlalchemy_utils import UUIDType
 
+from airflow._shared.timezones import timezone
+from airflow.dag_processing.bundles.manager import DagBundlesManager
 from airflow.models.base import Base, StringID
-from airflow.utils import timezone
 from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.sqlalchemy import UtcDateTime, with_row_locks
 
@@ -47,6 +48,12 @@ class DagVersion(Base):
     dag_model = relationship("DagModel", back_populates="dag_versions")
     bundle_name = Column(StringID(), nullable=True)
     bundle_version = Column(StringID())
+    bundle = relationship(
+        "DagBundleModel",
+        primaryjoin="foreign(DagVersion.bundle_name) == DagBundleModel.name",
+        uselist=False,
+        viewonly=True,
+    )
     dag_code = relationship(
         "DagCode",
         back_populates="dag_version",
@@ -72,6 +79,20 @@ class DagVersion(Base):
     def __repr__(self):
         """Represent the object as a string."""
         return f"<DagVersion {self.dag_id} {self.version}>"
+
+    @property
+    def bundle_url(self) -> str | None:
+        """Render the bundle URL using the joined bundle metadata if available."""
+        # Prefer using the joined bundle relationship when present to avoid extra queries
+        if getattr(self, "bundle", None) is not None and hasattr(self.bundle, "signed_url_template"):
+            return self.bundle.render_url(self.bundle_version)
+
+        # fallback to the deprecated option if the bundle model does not have a signed_url_template
+        # attribute
+        try:
+            return DagBundlesManager().view_url(self.bundle_name, self.bundle_version)
+        except ValueError:
+            return None
 
     @classmethod
     @provide_session
@@ -112,7 +133,13 @@ class DagVersion(Base):
         return dag_version
 
     @classmethod
-    def _latest_version_select(cls, dag_id: str, bundle_version: str | None = None) -> Select:
+    def _latest_version_select(
+        cls,
+        dag_id: str,
+        bundle_version: str | None = None,
+        load_dag_model: bool = False,
+        load_bundle_model: bool = False,
+    ) -> Select:
         """
         Get the select object to get the latest version of the DAG.
 
@@ -122,22 +149,44 @@ class DagVersion(Base):
         query = select(cls).where(cls.dag_id == dag_id)
         if bundle_version:
             query = query.where(cls.bundle_version == bundle_version)
+
+        if load_dag_model:
+            query = query.options(joinedload(cls.dag_model))
+
+        if load_bundle_model:
+            query = query.options(joinedload(cls.bundle))
+
         query = query.order_by(cls.created_at.desc()).limit(1)
         return query
 
     @classmethod
     @provide_session
     def get_latest_version(
-        cls, dag_id: str, *, bundle_version: str | None = None, session: Session = NEW_SESSION
+        cls,
+        dag_id: str,
+        *,
+        bundle_version: str | None = None,
+        load_dag_model: bool = False,
+        load_bundle_model: bool = False,
+        session: Session = NEW_SESSION,
     ) -> DagVersion | None:
         """
         Get the latest version of the DAG.
 
         :param dag_id: The DAG ID.
         :param session: The database session.
+        :param load_dag_model: Whether to load the DAG model.
+        :param load_bundle_model: Whether to load the DagBundle model.
         :return: The latest version of the DAG or None if not found.
         """
-        return session.scalar(cls._latest_version_select(dag_id, bundle_version=bundle_version))
+        return session.scalar(
+            cls._latest_version_select(
+                dag_id,
+                bundle_version=bundle_version,
+                load_dag_model=load_dag_model,
+                load_bundle_model=load_bundle_model,
+            )
+        )
 
     @classmethod
     @provide_session

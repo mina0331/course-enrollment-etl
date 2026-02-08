@@ -345,6 +345,18 @@ CONFIGS_CHANGES = [
     ),
     ConfigChange(
         config=ConfigParameter("webserver", "cookie_samesite"),
+        renamed_to=ConfigParameter("fab", "cookie_samesite"),
+        breaking=True,
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "audit_view_included_events"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "audit_view_excluded_events"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "instance_name"),
+        renamed_to=ConfigParameter("api", "instance_name"),
     ),
     ConfigChange(
         config=ConfigParameter("webserver", "update_fab_perms"),
@@ -443,6 +455,10 @@ CONFIGS_CHANGES = [
         renamed_to=ConfigParameter("api", "access_logfile"),
     ),
     ConfigChange(
+        config=ConfigParameter("webserver", "grid_view_sorting_order"),
+        renamed_to=ConfigParameter("api", "grid_view_sorting_order"),
+    ),
+    ConfigChange(
         config=ConfigParameter("webserver", "enable_swagger_ui"),
         renamed_to=ConfigParameter("api", "enable_swagger_ui"),
     ),
@@ -495,6 +511,38 @@ CONFIGS_CHANGES = [
         was_deprecated=False,
     ),
     ConfigChange(
+        config=ConfigParameter("webserver", "log_fetch_timeout_sec"),
+        renamed_to=ConfigParameter("api", "log_fetch_timeout_sec"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "hide_paused_dags_by_default"),
+        renamed_to=ConfigParameter("api", "hide_paused_dags_by_default"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "page_size"),
+        renamed_to=ConfigParameter("api", "page_size"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "default_wrap"),
+        renamed_to=ConfigParameter("api", "default_wrap"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "require_confirmation_dag_change"),
+        renamed_to=ConfigParameter("api", "require_confirmation_dag_change"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "instance_name_has_markup"),
+        was_deprecated=False,
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "warn_deployment_exposure"),
+        was_deprecated=False,
+    ),
+    ConfigChange(
+        config=ConfigParameter("webserver", "auto_refresh_interval"),
+        renamed_to=ConfigParameter("api", "auto_refresh_interval"),
+    ),
+    ConfigChange(
         config=ConfigParameter("webserver", "enable_proxy_fix"),
         renamed_to=ConfigParameter("fab", "enable_proxy_fix"),
     ),
@@ -524,6 +572,8 @@ CONFIGS_CHANGES = [
     ),
     ConfigChange(
         config=ConfigParameter("webserver", "cookie_secure"),
+        renamed_to=ConfigParameter("fab", "cookie_secure"),
+        breaking=True,
         was_deprecated=False,
     ),
     ConfigChange(
@@ -589,6 +639,9 @@ CONFIGS_CHANGES = [
     ),
     ConfigChange(
         config=ConfigParameter("scheduler", "allow_trigger_in_future"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "dag_stale_not_seen_duration"),
     ),
     ConfigChange(
         config=ConfigParameter("scheduler", "catchup_by_default"),
@@ -1021,7 +1074,7 @@ def update_config(args) -> None:
             console.print(f"  - {change_msg}")
         if dry_run:
             console.print(
-                "[blue]Dry-run is mode enabled. To apply above airflow.cfg run the command "
+                "[blue]Dry-run mode is enabled. To apply above airflow.cfg run the command "
                 "with `--fix`.[/blue]"
             )
     else:

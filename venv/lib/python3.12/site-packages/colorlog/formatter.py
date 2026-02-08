@@ -4,6 +4,8 @@ import logging
 import os
 import sys
 import typing
+import traceback
+import io
 
 import colorlog.escape_codes
 
@@ -138,28 +140,28 @@ class ColoredFormatter(logging.Formatter):
         """
         Build a map of keys to escape codes for use in message formatting.
 
-        If _blank_escape_codes() returns True, all values will be an empty string.
+        If _color() returns False, all values will be an empty string.
         """
         codes = {**colorlog.escape_codes.escape_codes}
         codes.setdefault("log_color", self._get_escape_code(self.log_colors, item))
         for name, colors in self.secondary_log_colors.items():
             codes.setdefault("%s_log_color" % name, self._get_escape_code(colors, item))
-        if self._blank_escape_codes():
+        if not self._colorize():
             codes = {key: "" for key in codes.keys()}
         return codes
 
-    def _blank_escape_codes(self):
-        """Return True if we should be prevented from printing escape codes."""
+    def _colorize(self):
+        """Return False if we should be prevented from printing escape codes."""
         if self.force_color or "FORCE_COLOR" in os.environ:
-            return False
+            return True
 
         if self.no_color or "NO_COLOR" in os.environ:
-            return True
+            return False
 
         if self.stream is not None and not self.stream.isatty():
-            return True
+            return False
 
-        return False
+        return True
 
     @staticmethod
     def _get_escape_code(log_colors: LogColors, item: str) -> str:
@@ -174,6 +176,26 @@ class ColoredFormatter(logging.Formatter):
             message += reset_escape_code
 
         return message
+
+    if sys.version_info >= (3, 13):
+
+        def formatException(self, ei) -> str:
+            """
+            Format and return the specified exception information as a string.
+
+            This is a copy of logging.Formatter.formatException that passes in
+            an appropriate value for colorize to print_exception.
+            """
+            kwargs = dict(colorize=self._colorize())
+
+            sio = io.StringIO()
+            tb = ei[2]
+            traceback.print_exception(ei[0], ei[1], tb, limit=None, file=sio, **kwargs)
+            s = sio.getvalue()
+            sio.close()
+            if s[-1:] == "\n":
+                s = s[:-1]
+            return s
 
 
 class LevelFormatter:

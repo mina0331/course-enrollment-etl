@@ -24,13 +24,13 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from airflow.api.common.trigger_dag import trigger_dag
+from airflow.api_fastapi.common.dagbag import DagBagDep, get_dag_for_run
 from airflow.api_fastapi.common.db.common import SessionDep
 from airflow.api_fastapi.common.types import UtcDateTime
 from airflow.api_fastapi.execution_api.datamodels.dagrun import DagRunStateResponse, TriggerDAGRunPayload
 from airflow.api_fastapi.execution_api.datamodels.taskinstance import DagRun
 from airflow.exceptions import DagRunAlreadyExists
 from airflow.models.dag import DagModel
-from airflow.models.dagbag import DagBag
 from airflow.models.dagrun import DagRun as DagRunModel
 from airflow.utils.state import DagRunState
 from airflow.utils.types import DagRunTriggeredByType
@@ -107,6 +107,7 @@ def clear_dag_run(
     dag_id: str,
     run_id: str,
     session: SessionDep,
+    dag_bag: DagBagDep,
 ):
     """Clear a DAG Run."""
     dm = session.scalar(select(DagModel).where(~DagModel.is_stale, DagModel.dag_id == dag_id).limit(1))
@@ -125,8 +126,11 @@ def clear_dag_run(
             },
         )
 
-    dag_bag = DagBag(dag_folder=dm.fileloc, read_dags_from_db=True)
-    dag = dag_bag.get_dag(dag_id)
+    dag_run = session.scalar(
+        select(DagRunModel).where(DagRunModel.dag_id == dag_id, DagRunModel.run_id == run_id)
+    )
+    dag = get_dag_for_run(dag_bag, dag_run=dag_run, session=session)
+
     dag.clear(run_id=run_id)
 
 

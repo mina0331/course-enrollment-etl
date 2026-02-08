@@ -19,8 +19,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from airflow._shared.timezones import timezone
 from airflow.timetables.base import DagRunInfo, DataInterval, Timetable
-from airflow.utils import timezone
 
 if TYPE_CHECKING:
     from pendulum import DateTime
@@ -49,6 +49,9 @@ class _TrivialTimetable(Timetable):
         if not isinstance(other, type(self)):
             return NotImplemented
         return True
+
+    def __hash__(self):
+        return hash(self.__class__.__name__)
 
     def serialize(self) -> dict[str, Any]:
         return {}
@@ -101,12 +104,11 @@ class OnceTimetable(_TrivialTimetable):
     ) -> DagRunInfo | None:
         if last_automated_data_interval is not None:
             return None  # Already run, no more scheduling.
-        if restriction.earliest is None:  # No start date, won't run.
-            return None
+        # If the user does not specify an explicit start_date, the dag is ready.
+        run_after = restriction.earliest or timezone.coerce_datetime(timezone.utcnow())
         # "@once" always schedule to the start_date determined by the DAG and
         # tasks, regardless of catchup or not. This has been the case since 1.10
         # and we're inheriting it.
-        run_after = restriction.earliest
         if restriction.latest is not None and run_after > restriction.latest:
             return None
         return DagRunInfo.exact(run_after)
