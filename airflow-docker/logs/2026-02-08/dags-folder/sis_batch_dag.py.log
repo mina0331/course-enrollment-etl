@@ -50,3 +50,4 @@
 {"timestamp":"2026-02-08T04:09:18.151825Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/sis_batch_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
 {"timestamp":"2026-02-08T04:09:48.697622Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/sis_batch_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
 {"timestamp":"2026-02-08T04:10:19.141879Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/sis_batch_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
+{"timestamp":"2026-02-08T04:10:49.637467Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/sis_batch_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
