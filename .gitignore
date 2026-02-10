@@ -7,9 +7,6 @@ airflow/plugins/__pycache__/
 
 # Virtual envs
 venv/
-.env/
-.venv/
-env/
 
 # SQLite
 *.db
@@ -19,3 +16,6 @@ env/
 
 # Local data
 /data/
+/db
+
+#
