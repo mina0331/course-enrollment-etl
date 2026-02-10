@@ -4,10 +4,11 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow import DAG
 import requests
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+
 
 import json 
-import sqlite3
+from sqlalchemy import create_engine, text
+import os 
 
 
 def iter_docs_paged(col, page_size=2000, query=None, projection=None):
@@ -44,49 +45,43 @@ def pull_sis_api_to_raw_data(**kwargs):
     if not term:
         raise ValueError("A 'given_term' argument must be provided.")
     
-    conn = sqlite3.connect('data/app.db')
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")  # Enable WAL mode for better concurrency
-    conn.execute("PRAGMA foreign_keys=ON;")  # Ensure foreign key constraints are enforced
-    conn.execute("PRAGMA busy_timeout=50000;")  # Wait up to 50 seconds if the database is locked
-    
-    conn.execute("BEGIN") #starting a transaction so either the whole batch suceeds or none of it does 
 
-    while True:
-        API_URL = f"https://sisuva.admin.virginia.edu/psc/ihprd/UVSS/SA/s/WEBLIB_HCX_CM.H_CLASS_SEARCH.FieldFormula.IScript_ClassSearch?institution=UVA01&term={term}&acad_career=UGRD&page={page}"
-        #Getting the current semester's courses from the UVA SIS API for undergraduate students
-        try: 
-            response = requests.get(API_URL)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            raise RuntimeError(f"Error fetching data from SIS API: {e}")
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.begin() as conn:
+        while True:
+            API_URL = f"https://sisuva.admin.virginia.edu/psc/ihprd/UVSS/SA/s/WEBLIB_HCX_CM.H_CLASS_SEARCH.FieldFormula.IScript_ClassSearch?institution=UVA01&term={term}&acad_career=UGRD&page={page}"
+            #Getting the current semester's courses from the UVA SIS API for undergraduate students
+            try: 
+                response = requests.get(API_URL)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                raise RuntimeError(f"Error fetching data from SIS API: {e}")
+            
+            course_data = response.json()  # Parse the JSON response
+            courses = course_data["results"] if isinstance(course_data, dict) and "results" in course_data else course_data
+            # extracting the courses from the response, checking if the response is a dictionary and has a "results" key
+            if courses is None: 
+                courses = []
+                break
+            if not isinstance(courses, list):
+                #if the courses are not a list, convert it to a list
+                courses = [courses]
+            if len(courses) == 1 and isinstance(courses[0], dict) and "classes" in courses[0]:
+                courses = courses[0]["classes"] or []
+            if not courses:
+                break
+            #upwrapping by the key classes 
+            print("First course keys:", list(courses[0].keys())[:25] if courses else "NO COURSES")
+            
+            upsert_to_database(
+                {"term": term, "page": page, "classes": courses},
+                term=term,
+                page=page,
+                conn=conn,
+            )
+            page+=1
         
-        course_data = response.json()  # Parse the JSON response
-        courses = course_data["results"] if isinstance(course_data, dict) and "results" in course_data else course_data
-        # extracting the courses from the response, checking if the response is a dictionary and has a "results" key
-        if courses is None: 
-            courses = []
-            break
-        if not isinstance(courses, list):
-            #if the courses are not a list, convert it to a list
-            courses = [courses]
-        if len(courses) == 1 and isinstance(courses[0], dict) and "classes" in courses[0]:
-            courses = courses[0]["classes"] or []
-        if not courses:
-            break
-        #upwrapping by the key classes 
-        print("First course keys:", list(courses[0].keys())[:25] if courses else "NO COURSES")
         
-        upsert_to_database(
-            {"term": term, "page": page, "classes": courses},
-            term=term,
-            page=page,
-            conn=conn,
-        )
-        page+=1
-    conn.commit()
-    conn.close()
-    
 
 def upsert_to_database(courses: list[dict], term, page, conn) -> None:
     ingested_at = datetime.now(timezone.utc)
@@ -104,12 +99,15 @@ def upsert_to_database(courses: list[dict], term, page, conn) -> None:
         payload = json.dumps(c, separators=(",", ":"), default=str)  # Convert to JSON string for storage
 
         rows.append(
-            (term, str(class_nbr), payload, int(page),ingested_at)
+            {"term": term, 
+             "class_nbr": str(class_nbr), 
+             "payload": payload, 
+             "page_fetched": int(page), 
+             "fetched_at": ingested_at}
         )
     print("Operations prepared:", len(rows))
     if rows:
-        conn.executemany(
-            """
+        conn.execute(text("""
             INSERT INTO raw_sis_data(
                 term_id,
                 class_nbr,
@@ -117,12 +115,13 @@ def upsert_to_database(courses: list[dict], term, page, conn) -> None:
                 page_fetched,
                 fetched_at
             )
-            VALUES (?, ?, JSON(?), ?, ?)
+            VALUES (:term, :class_nbr, CAST(:payload AS jsonb), :page_fetched, :fetched_at)
             ON CONFLICT (term_id, class_nbr) DO UPDATE SET
                 page_fetched = EXCLUDED.page_fetched,
                 payload = EXCLUDED.payload,
                 fetched_at = EXCLUDED.fetched_at
-            """,
+            """)
+            ,
             rows,
         )
     else:
@@ -137,7 +136,7 @@ def extract_transform_course_table(doc: dict) -> dict:
         "credits": int(doc["units"]) if "units" in doc and str(doc["units"]).isdigit() else None,
         "subject_id": doc["subject"],
         "catalog_nbr": doc["catalog_nbr"],
-        "has_discussion": doc.get("component") == "DISC",
+        "has_discussion": doc.get("component") == "DIS",
         "has_lab": doc.get("component") == "LAB",
         "component": doc.get("component"),
 
@@ -180,64 +179,53 @@ def extract_transform_instructor_table(doc: dict, term) -> dict:
         })
     return instructors
 
-def connect_sqlite(**kwargs):
+def connect_database(**kwargs):
     table_name = kwargs.get('table_name')
     term = kwargs.get('given_term')
     
-    conn = sqlite3.connect('data/app.db')
-    conn.row_factory = sqlite3.Row #acess columns by name: instead of row[0], we can do row["course_id"] which is more readable and less error prone 
-    conn.execute("PRAGMA journal_mode=WAL;")  # Enable WAL mode for better concurrency
-    conn.execute("PRAGMA foreign_keys=ON;")  # Ensure foreign key constraints are
-    conn.execute("PRAGMA busy_timeout=50000;")  # Wait up to 50 seconds if the database is locked
+    engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    with engine.begin() as conn:
+        try: 
+            
+            result = conn.execute(text("""
+                SELECT payload FROM raw_sis_data WHERE term_id = :term
+            """), {"term": term})
+            
+            for row in result.mappings():
+                
+                payload = row["payload"]
+            
+                #tunring raw json to dict 
 
-    conn.execute("BEGIN") #starting a transaction so either the whole batch suceeds or none of it does
+                if table_name == "course":
+                    course_doc = extract_transform_course_table(payload)
+                    flush(conn, table_name, [course_doc])
+                elif table_name == "section":
+                    section_doc = extract_transform_section_table(payload, term)
+                    flush(conn, table_name, [section_doc])
+                elif table_name == "professor":    
+                    instructor_docs = extract_transform_instructor_table(payload, term)
+                    flush(conn, table_name, instructor_docs)
+                else:
+                    raise ValueError(f"Unknown table name: {table_name}")
+        except Exception as e:
+            conn.rollback()
+            print(f"Error processing {table_name} for term {term}: {e}")
+            raise
 
-    try: 
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT payload FROM raw_sis_data WHERE term_id = ?",
-            (term,)
-        )
-        rows = cursor.fetchall()
-
-        for row in rows:
-            payload = json.loads(row["payload"])
-        
-            #tunring raw json to dict 
-
-            if table_name == "course":
-                course_doc = extract_transform_course_table(payload)
-                flush(cursor, conn, table_name, [course_doc])
-            elif table_name == "section":
-                section_doc = extract_transform_section_table(payload, term)
-                flush(cursor, conn, table_name, [section_doc])
-            elif table_name == "professor":    
-                instructor_docs = extract_transform_instructor_table(payload, term)
-                flush(cursor, conn, table_name, instructor_docs)
-            else:
-                raise ValueError(f"Unknown table name: {table_name}")
-    except Exception as e:
-        conn.rollback()
-        print(f"Error processing {table_name} for term {term}: {e}")
-        raise
-    else:
-        conn.commit()
-    finally:
-        conn.close()
 
     
     
 
-def flush(cursor, conn, table_name, batch):
+def flush(conn, table_name, batch):
     try:
         if table_name == "course":
-            load_batch_courses(cursor, batch)  # make this return inserted count if possible
+            load_batch_courses(conn, batch)  # make this return inserted count if possible
             
         elif table_name == "section":
-            load_batch_sections(cursor, batch)
+            load_batch_sections(conn, batch)
         else:
-            load_batch_instructors(cursor, batch)
-        conn.commit()
+            load_batch_instructors(conn, batch)
         batch.clear()
     except Exception as e:
         conn.rollback()
@@ -249,8 +237,8 @@ def flush(cursor, conn, table_name, batch):
     
         
 
-def load_batch_courses(cursor, rows):
-    cursor.executemany("""
+def load_batch_courses(conn, rows):
+    conn.execute(text("""
         INSERT INTO course(
             course_id,
             title,
@@ -274,14 +262,14 @@ def load_batch_courses(cursor, rows):
     ON CONFLICT(course_id) DO UPDATE SET
         has_discussion = excluded.has_discussion OR course.has_discussion,
         has_lab       = excluded.has_lab       OR course.has_lab
-    """,
+    """),
         rows
     )
     
     
 
-def load_batch_sections(cursor, rows):
-    cursor.executemany(
+def load_batch_sections(conn, rows):
+    conn.execute(text(
         """
         INSERT INTO section(
             course_id,
@@ -314,40 +302,42 @@ def load_batch_sections(cursor, rows):
             meetings_days = EXCLUDED.meetings_days,
             meetings_start_time = EXCLUDED.meetings_start_time,
             meetings_end_time = EXCLUDED.meetings_end_time
-        """,
+        """),
         rows
     )
 
-def load_batch_instructors(cursor, rows):
+def load_batch_instructors(conn, rows):
     print("Loading instructors, count:", len(rows))
     for row in rows:
         name = row["name"]
         email = row["email"]
-        cursor.execute(
+        conn.execute(text(
                 """
                 INSERT INTO professor (name, email)
-            VALUES (?, ?)
+            VALUES (:name, :email)
             ON CONFLICT (name, email) DO NOTHING
-            """,
-            (name, email)
+            """),
+            {"name": name, "email": email}
         )
-        cursor.execute(
-            "SELECT professor_id FROM professor WHERE name = ? AND email = ?",
-            (name, email)
-        )
-        professor_id = cursor.fetchone()
-        if professor_id:
-            cursor.execute(
+        
+        prof_id = conn.execute(text("SELECT professor_id FROM professor WHERE name = :name AND email = :email"), {"name": name, "email": email}).scalar_one_or_none()
+
+        if prof_id:
+            conn.execute(text(
                 """
                 INSERT INTO section_professor(
                     term_id,
                     class_nbr,
                     professor_id
                 )
-                VALUES (?, ?, ?)
+                VALUES (:term_id, :class_nbr, :professor_id)
                 ON CONFLICT (term_id, class_nbr, professor_id) DO NOTHING
-                """,
-                (row["term_id"], row["class_nbr"], professor_id[0])
+                """),
+                {
+                    "term_id": row["term_id"],
+                    "class_nbr": row["class_nbr"],
+                    "professor_id": prof_id
+                }
             )
         else:
             print(f"WARNING: Could not find professor_id for {name}, {email}")
@@ -390,20 +380,20 @@ with DAG (
 
     t2 = PythonOperator(
         task_id="transforming_data_course",
-        python_callable=connect_sqlite,
+        python_callable=connect_database,
         retries=3,
         op_kwargs={'table_name':'course', 'given_term': '1262'},
     )
 
     t3 = PythonOperator(
         task_id="transforming_data_section",
-        python_callable=connect_sqlite,
+        python_callable=connect_database,
         retries=3,
         op_kwargs={'table_name':'section', 'given_term': '1262'},
     )
     t4 = PythonOperator(
         task_id="transforming_data_instructor",
-        python_callable=connect_sqlite,
+        python_callable=connect_database,
         retries=3,
         op_kwargs={'table_name':'professor', 'given_term': '1262'},
 

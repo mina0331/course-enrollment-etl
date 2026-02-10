@@ -6,9 +6,7 @@ from airflow import DAG
 from datetime import datetime, timedelta, timezone
 from airflow.models import Variable
 
-from pymongo import MongoClient, UpdateOne
-import psycopg
-import urllib
+
 
 
 

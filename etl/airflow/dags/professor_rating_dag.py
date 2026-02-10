@@ -7,11 +7,12 @@ from airflow import DAG
 from datetime import datetime, timedelta, timezone
 from airflow.models import Variable
 
-from pymongo import MongoClient, UpdateOne
-import psycopg
+
+
 import urllib
 import sqlite3
 
+DB_PATH = "/opt/airflow/data/app.db"
 
 def fetching_courses_to_pull_in_for(conn) -> dict[str, list[dict[str, Any]]]:
     courses = {}
@@ -23,7 +24,7 @@ def fetching_courses_to_pull_in_for(conn) -> dict[str, list[dict[str, Any]]]:
 
 def pull_professor_rating_raw_html(**kwargs):
     term = kwargs.get("term")
-    conn = sqlite3.connect("data/app.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -65,7 +66,7 @@ def pull_professor_rating_raw_html(**kwargs):
 def transform_html_file_instructor(**kwargs):
     term = kwargs.get("term")
 
-    conn = sqlite3.connect("data/app.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")

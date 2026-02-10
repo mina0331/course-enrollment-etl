@@ -5,9 +5,11 @@ airflow/*.pid
 airflow/dags/__pycache__/
 airflow/plugins/__pycache__/
 
-# Secrets
-.env
-.env.*
+# Virtual envs
+venv/
+.env/
+.venv/
+env/
 
 # SQLite
 *.db

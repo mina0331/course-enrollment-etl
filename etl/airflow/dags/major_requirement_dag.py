@@ -4,12 +4,11 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow import DAG
 from annotated_types import doc
 import requests
-from pymongo import MongoClient, UpdateOne
+
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from airflow.models import Variable
-import psycopg
-from psycopg.rows import dict_row
+
 import urllib
 
 #automating grabbing of the pdf fiels for major requirement sheets
