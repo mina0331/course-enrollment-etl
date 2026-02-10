@@ -1,21 +1,16 @@
-# Airflow
-airflow/logs/
-airflow/airflow.db
-airflow/*.pid
-airflow/dags/__pycache__/
-airflow/plugins/__pycache__/
-
-# Virtual envs
+# Python
 venv/
+.venv/
 
-# SQLite
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+# Airflow runtime
+airflow/logs/
+airflow/plugins/
+airflow/__pycache__/
 
-# Local data
-/data/
+# Databases
 /db
 
-#
+# Secrets
+.env
+.env.*
+airflow-docker/.env
