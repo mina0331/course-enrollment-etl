@@ -5,87 +5,75 @@ from bs4 import BeautifulSoup
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow import DAG
 from datetime import datetime, timedelta, timezone
-from airflow.models import Variable
 
 
 
 import urllib
-import sqlite3
+import os
+from sqlalchemy import create_engine, text
 
-DB_PATH = "/opt/airflow/data/app.db"
+
 
 def fetching_courses_to_pull_in_for(conn) -> dict[str, list[dict[str, Any]]]:
     courses = {}
-    with conn.cursor() as cur:
-        cur.execute("SELECT subject_id, catalog_nbr, course_id FROM course;")
-        for subject, catalog_nbr, course_id in cur:
-            courses.setdefault(subject, []).append({"course_id": course_id, "catalog_nbr": catalog_nbr})
+    results = conn.execute(text("SELECT subject_id, catalog_nbr, course_id FROM course;")).mappings()
+    for row in results:
+        subject = row["subject_id"]
+        catalog_nbr = row["catalog_nbr"]
+        course_id = row["course_id"]
+        courses.setdefault(subject, []).append({"course_id": course_id, "catalog_nbr": catalog_nbr})
     return courses
 
 def pull_professor_rating_raw_html(**kwargs):
     term = kwargs.get("term")
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA busy_timeout = 50000;")
     
-    conn.execute("BEGIN")
-    courses = fetching_courses_to_pull_in_for(conn)
-    rows = []
-    for subject, items in courses.items(): 
-        for item in items:
-            catalog_nbr = item["catalog_nbr"]
-            course_id = item["course_id"]
-            url_course_forum = f"https://thecourseforum.com/course/{subject.upper()}/{catalog_nbr}/All"
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.begin() as conn:
+        courses = fetching_courses_to_pull_in_for(conn)
+        rows = []
+        for subject, items in courses.items(): 
+            for item in items:
+                catalog_nbr = item["catalog_nbr"]
+                course_id = item["course_id"]
+                url_course_forum = f"https://thecourseforum.com/course/{subject.upper()}/{catalog_nbr}/All"
 
-            print("Fetching URL:", url_course_forum)
-            #opening the url for reading
-            req = urllib.request.Request(url_course_forum, headers={"User-Agent": "Mozilla/5.0"})
-            #adding a user agent so that the access won't get blocked as easily 
-            fetched_at = datetime.now(timezone.utc)
-            try:
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    raw_html = resp.read().decode("utf-8", errors="replace")
-            except Exception as e:
-                raw_html = None
+                print("Fetching URL:", url_course_forum)
+                #opening the url for reading
+                req = urllib.request.Request(url_course_forum, headers={"User-Agent": "Mozilla/5.0"})
+                #adding a user agent so that the access won't get blocked as easily 
+                fetched_at = datetime.now(timezone.utc)
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        raw_html = resp.read().decode("utf-8", errors="replace")
+                except Exception as e:
+                    raw_html = ""
+                
+                rows.append({"term": term, "subject": subject, "catalog_nbr": catalog_nbr, "course_id": course_id, "url": url_course_forum, "raw_html": raw_html, "fetched_at": fetched_at})
+                
+        if rows:
+            conn.execute(text("INSERT INTO professor_rating_raw_html (term, subject, catalog_nbr, course_id, url, raw_html, fetched_at) VALUES (:term, :subject, :catalog_nbr, :course_id, :url, :raw_html, :fetched_at) ON CONFLICT (subject, catalog_nbr, course_id) DO UPDATE SET raw_html = EXCLUDED.raw_html, fetched_at = EXCLUDED.fetched_at"), rows)
             
-            
-            
-            rows.append((term, subject, catalog_nbr, course_id, url_course_forum, raw_html,fetched_at))
-            
-
-    
-    if rows:
-        with conn.cursor() as cur:
-            cur.executemany("INSERT INTO professor_rating_raw_html (term, subject, catalog_nbr, course_id, url, raw_html, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
-        conn.commit()
-    conn.close()
-    
+        
+        
 
 def transform_html_file_instructor(**kwargs):
     term = kwargs.get("term")
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("BEGIN")
-
-    courses = fetching_courses_to_pull_in_for(conn)
     
-    
-    with conn.cursor() as cur:
+
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.begin() as conn:
+
+        courses = fetching_courses_to_pull_in_for(conn)
         for subject, items in courses.items():
             for item in items:
                 catalog = item["catalog_nbr"]
                 course_id = item["course_id"]
                 url_course_forum = f"https://thecourseforum.com/course/{subject.upper()}/{catalog}/All"
 
-                html_fetched_instructor_ratings = cur.execute("SELECT raw_html FROM professor_rating_raw_html WHERE url = ?", (url_course_forum,)).fetchall()
-    
+                html_fetched_instructor_ratings = conn.execute(text("SELECT raw_html FROM professor_rating_raw_html WHERE url = :url"), {"url": url_course_forum}).mappings().all()
+        
                 for html_fetched_instructor_rating in html_fetched_instructor_ratings:
-                    if (html_fetched_instructor_rating["raw_html"]):
+                    if (html_fetched_instructor_rating["raw_html"] != ""):
                         html_parsed = BeautifulSoup(html_fetched_instructor_rating["raw_html"], 'html.parser')
                         instructor_items = html_parsed.find_all("li", class_="instructor")
                         print(f"Processing course {subject} {catalog} with {len(instructor_items)} instructors")
@@ -94,15 +82,20 @@ def transform_html_file_instructor(**kwargs):
                             difficulty=instructor.find("p", id="difficulty").text.strip()
                             name = instructor.find("h3", id="title").text.strip()
                             if (rating != "—"):
-                                professor_id = cur.execute("SELECT professor_id FROM professor WHERE name = ?", (name,)).fetchone()
-                                if professor_id:
-                                    cur.execute("UPDATE section_professor SET rating = ? WHERE professor_id = ? AND course_id=?;", (rating, professor_id["professor_id"], course_id))
-                                    print(f"Updated instructor {name} with rating {rating} for course_id {course_id}")
-                            if (difficulty != "—"):
-                                cur.execute("UPDATE section_professor SET difficulty = ? WHERE professor_id = ? AND course_id=?;", (difficulty,professor_id["professor_id"], course_id))
-                                print(f"Updated instructor {name} with difficulty {difficulty} for course_id {course_id}")
-            conn.commit()
-    conn.close()
+                                result = conn.execute(text("SELECT professor_id FROM professor WHERE name = :name"), {"name": name}).mappings().all()
+                                if len(result) > 1:
+                                    print(f"WARNING: Multiple professors found with name {name}. Skipping rating update for this instructor.")
+                                    continue
+                                if len(result) == 0:
+                                    print(f"WARNING: No professor found with name {name}. Skipping rating update for this instructor.")
+                                    continue
+                                else:
+                                    conn.execute(text("UPDATE section_professor SET rating = :rating WHERE professor_id = :professor_id and course_id = :course_id"), {"rating": rating, "professor_id": result[0]["professor_id"], "course_id": course_id})
+                                    print(f"Updated instructor {name} with rating {rating}")
+                                    if (difficulty != "—"):
+                                        conn.execute(text("UPDATE section_professor SET difficulty = :difficulty WHERE professor_id = :professor_id and course_id = :course_id"), {"difficulty": difficulty, "professor_id": result[0]["professor_id"], "course_id": course_id})
+                                        print(f"Updated instructor {name} with difficulty {difficulty}")
+                
     
 
 

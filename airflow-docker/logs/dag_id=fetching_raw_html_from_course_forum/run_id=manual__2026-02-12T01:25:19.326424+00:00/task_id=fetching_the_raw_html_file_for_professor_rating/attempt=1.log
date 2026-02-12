@@ -1,0 +1,54 @@
+{"timestamp":"2026-02-12T01:25:19.734825Z","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager","filename":"manager.py","lineno":179}
+{"timestamp":"2026-02-12T01:25:19.735632Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/professor_rating_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
+{"timestamp":"2026-02-12T01:25:19.819195Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3150/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:20.223124Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3501/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:20.432182Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/4993/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:20.598251Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/1090/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:21.806073Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/1110/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:22.055246Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/2120/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:22.326655Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/2130/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:24.032798Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/2501/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:24.229194Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3080/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:24.552982Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3100/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:25.812894Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3110/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:27.177429Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3120/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:27.423764Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/APMA/3140/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:27.606570Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/1020/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:27.809653Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/2702/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:27.955054Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/3060/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.116556Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/3403/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.282883Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/3500/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.457245Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/3604/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.612567Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/4591/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.781388Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/4993/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:28.939433Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ARH/4999/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.133684Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/1020/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.313760Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/2020/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.481508Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/3015/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.632079Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/3020/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.777154Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/3460/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:29.930090Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/3559/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.163266Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/4450/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.313402Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/4750/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.478786Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASL/4993/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.631194Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/1210/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.882014Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/1220/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:30.907885Z","level":"error","event":"Server indicated the task shouldn't be running anymore. Terminating process","detail":{"detail":{"reason":"not_running","message":"TI is no longer in the running state and task should terminate","current_state":"success"}},"logger":"task"}
+{"timestamp":"2026-02-12T01:25:31.151863Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/1250/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:31.309157Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/1290/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:31.460831Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/1610/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:31.655621Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/2120/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:31.879074Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3130/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.041147Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3420/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.202982Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3450/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.356401Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3490/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.501820Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3880/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.660807Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/3881/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.824406Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/4140/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:32.970854Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/4470/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:33.120723Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/4993/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:33.425359Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/ASTR/4998/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:33.727780Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/BIOL/2200/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:34.287264Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/BIOL/3000/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:34.503278Z","level":"info","event":"Fetching URL: https://thecourseforum.com/course/BIOL/2100/All","logger":"task.stdout"}
+{"timestamp":"2026-02-12T01:25:35.944588Z","level":"error","event":"Task killed!","logger":"task"}

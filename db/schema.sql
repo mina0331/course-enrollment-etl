@@ -48,10 +48,10 @@ CREATE TABLE IF NOT EXISTS "professor"(
 
 CREATE TABLE IF NOT EXISTS "section_professor"(
     term_id TEXT NOT NULL,
-    class_nbr TEXT NOT NULL,
+    course_id INT NOT NULL,
     professor_id INT NOT NULL, rating DECIMAL(10,2), difficulty DECIMAL(10,2),
-    PRIMARY KEY(term_id, class_nbr, professor_id),
-    FOREIGN KEY (term_id, class_nbr) REFERENCES section(term_id, class_nbr),
+    PRIMARY KEY(term_id, course_id, professor_id),
+    FOREIGN KEY (term_id, course_id) REFERENCES section(term_id, course_id),
     FOREIGN KEY (professor_id) REFERENCES professor(professor_id)
 );
 

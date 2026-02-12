@@ -167,13 +167,13 @@ def extract_transform_instructor_table(doc: dict, term) -> dict:
     for instructor in instructor_info:
         name = instructor.get("name")
         if name in {"To Be Announced", "-"}:
-            print("SKIP: To Be Announced instructor for class_nbr:", doc["class_nbr"])
+            print("SKIP: To Be Announced instructor for course_id:", doc["crse_id"])
             continue
-        print("Processing instructor:", instructor.get("name"), "for class_nbr:", doc["class_nbr"])
+        print("Processing instructor:", instructor.get("name"), "for course_id:", doc["crse_id"])
         instructors.append({
             "name": instructor.get("name"),
             "email": instructor.get("email"),
-            "class_nbr": doc["class_nbr"],
+            "course_id": doc["crse_id"],
             "term_id": term,
             
         })
@@ -196,7 +196,6 @@ def connect_database(**kwargs):
                 payload = row["payload"]
             
                 #tunring raw json to dict 
-
                 if table_name == "course":
                     course_doc = extract_transform_course_table(payload)
                     flush(conn, table_name, [course_doc])
@@ -322,20 +321,18 @@ def load_batch_instructors(conn, rows):
         
         prof_id = conn.execute(text("SELECT professor_id FROM professor WHERE name = :name AND email = :email"), {"name": name, "email": email}).scalar_one_or_none()
 
-        if prof_id:
+        if prof_id is not None:
             conn.execute(text(
                 """
                 INSERT INTO section_professor(
                     term_id,
-                    class_nbr,
+                    course_id,
                     professor_id
-                )
-                VALUES (:term_id, :class_nbr, :professor_id)
-                ON CONFLICT (term_id, class_nbr, professor_id) DO NOTHING
-                """),
+                ) VALUES (:term_id, :course_id, :professor_id)
+                """ ),
                 {
                     "term_id": row["term_id"],
-                    "class_nbr": row["class_nbr"],
+                    "course_id": row["course_id"],
                     "professor_id": prof_id
                 }
             )
