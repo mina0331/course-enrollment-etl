@@ -179,3 +179,4 @@
 {"timestamp":"2026-02-12T01:31:12.564126Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/reddit_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
 {"timestamp":"2026-02-12T01:31:43.344205Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/reddit_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
 {"timestamp":"2026-02-12T01:32:14.327183Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/reddit_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
+{"timestamp":"2026-02-12T01:32:45.123278Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/reddit_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}

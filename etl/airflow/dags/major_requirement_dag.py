@@ -1,15 +1,16 @@
-
-from airflow.providers.standard.operators.python import PythonOperator
+from pathlib import Path
+import sys
+import urllib
+from datetime import datetime, timezone, timedelta
 
 from airflow import DAG
-from annotated_types import doc
-import requests
+from airflow.providers.standard.operators.python import PythonOperator
 
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
-from airflow.models import Variable
+ROOT_DIR = Path(__file__).resolve().parents[3]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-import urllib
+from scripts.normalize_major_requirements import normalize_major_requirements
 
 #automating grabbing of the pdf fiels for major requirement sheets
 #define the sources of the pdfs
@@ -56,11 +57,8 @@ pull_minor_requirement_html_sources = {
 
 
 def fetch_major_requirement_page_html(**kwargs):
-    MONGOBD_URI = Variable.get("MONGODB_URI")
-    client = MongoClient(MONGOBD_URI)
     term = kwargs.get("term")
-    col = client["major_requirement_raw"][f"major_requirement_html_{term}"]
-    bulk_op = []
+    fetched_pages = []
     for url, filename in pull_major_requirement_html_sources.items():
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
@@ -68,30 +66,25 @@ def fetch_major_requirement_page_html(**kwargs):
                 raw_html = resp.read().decode("utf-8", errors="replace")
         except Exception as e:
             raw_html = None
-        doc_filter = {
-            "term": term,
-            "url": url,
-            "filename": filename,
-        }
-        doc_update = {
-            "$set": {
+        fetched_pages.append(
+            {
                 "term": term,
                 "url": url,
                 "filename": filename,
-                "raw_html": raw_html,
-                "fetched_at": datetime.now(timezone.utc)
-
+                "raw_html_present": raw_html is not None,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
             }
-        }
-
-        bulk_op.append(UpdateOne(doc_filter, doc_update, upsert=True))
-    if bulk_op:
-        col.bulk_write(bulk_op)
-    client.close()
+        )
+    return fetched_pages
 
 def pull_general_education_requirement_pdfs(**kwargs):
 
     return
+
+
+def normalize_major_requirements_task(**kwargs):
+    normalize_major_requirements()
+    return {"status": "ok", "normalized_at": datetime.now(timezone.utc).isoformat()}
 
 
 default_args = {
@@ -121,4 +114,9 @@ with DAG(
             python_callable=pull_general_education_requirement_pdfs,
             op_kwargs={"term": "1262"},  # SPRING 2026: the most recent term 
         )
-        fetch_major_requirement_page_html_task >> pull_general_education_requirement_pdfs_task
+        normalize_major_requirements_task = PythonOperator(
+            task_id="normalize_major_requirements",
+            python_callable=normalize_major_requirements_task,
+        )
+
+        fetch_major_requirement_page_html_task >> pull_general_education_requirement_pdfs_task >> normalize_major_requirements_task

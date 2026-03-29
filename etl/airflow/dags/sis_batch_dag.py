@@ -328,7 +328,15 @@ def load_batch_instructors(conn, rows):
                     term_id,
                     course_id,
                     professor_id
-                ) VALUES (:term_id, :course_id, :professor_id)
+                )
+                SELECT :term_id, :course_id, :professor_id
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM section_professor
+                    WHERE term_id = :term_id
+                      AND course_id = :course_id
+                      AND professor_id = :professor_id
+                )
                 """ ),
                 {
                     "term_id": row["term_id"],
@@ -399,5 +407,3 @@ with DAG (
 
     t1 >> t2 >> t3 >> t4
     
-
-
