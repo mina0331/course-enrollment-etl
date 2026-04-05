@@ -49,3 +49,12 @@ and predictive modeling.
 - Enrollment and waitlist outcome prediction
 - Feature engineering for course demand modeling
 - Student-facing analytics and decision support tools
+
+---
+
+## Project Notes
+
+- Synthetic student-section dataset notes:
+  [docs/synthetic_training_data.md](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/docs/synthetic_training_data.md)
+- Model accuracy improvement report for April 5, 2026:
+  [docs/model_accuracy_improvement_2026-04-05.md](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/docs/model_accuracy_improvement_2026-04-05.md)

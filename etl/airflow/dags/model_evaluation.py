@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, text
 BASE_DIR = Path(__file__).resolve().parent
 FEATURE_SQL_PATH = BASE_DIR / "enrollment_features.sql"
 LEGACY_FEATURE_SQL_PATH = BASE_DIR / "enrollment_features_legacy_section_professor.sql"
+DEFAULT_CLASSIFICATION_THRESHOLD = 0.40
 
 LEAKY_SNAPSHOT_COLUMNS = [
     "seats_taken",
@@ -185,7 +186,11 @@ def roc_auc_score_manual(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(auc)
 
 
-def classification_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> dict[str, float]:
+def classification_metrics(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    threshold: float = DEFAULT_CLASSIFICATION_THRESHOLD,
+) -> dict[str, float]:
     y_pred = (y_prob >= threshold).astype(int)
     tp = int(((y_pred == 1) & (y_true == 1)).sum())
     tn = int(((y_pred == 0) & (y_true == 0)).sum())
@@ -223,8 +228,17 @@ def evaluate_current_model() -> dict[str, object]:
         "features": x.shape[1],
         "train_term": train_term,
         "test_term": test_term,
-        "train_metrics": classification_metrics(y_train.to_numpy(dtype=int), train_prob),
-        "test_metrics": classification_metrics(y_test.to_numpy(dtype=int), test_prob),
+        "classification_threshold": DEFAULT_CLASSIFICATION_THRESHOLD,
+        "train_metrics": classification_metrics(
+            y_train.to_numpy(dtype=int),
+            train_prob,
+            threshold=DEFAULT_CLASSIFICATION_THRESHOLD,
+        ),
+        "test_metrics": classification_metrics(
+            y_test.to_numpy(dtype=int),
+            test_prob,
+            threshold=DEFAULT_CLASSIFICATION_THRESHOLD,
+        ),
     }
 
 

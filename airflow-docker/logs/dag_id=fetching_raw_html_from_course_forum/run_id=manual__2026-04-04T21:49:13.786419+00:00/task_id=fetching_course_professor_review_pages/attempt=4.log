@@ -1,0 +1,2 @@
+{"timestamp":"2026-04-05T02:44:28.535624Z","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager","filename":"manager.py","lineno":179}
+{"timestamp":"2026-04-05T02:44:28.537693Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/professor_rating_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}

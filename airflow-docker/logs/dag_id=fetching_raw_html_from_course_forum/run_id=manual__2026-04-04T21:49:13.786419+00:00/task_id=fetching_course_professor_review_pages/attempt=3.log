@@ -1,0 +1,4 @@
+{"timestamp":"2026-04-05T02:04:48.886136Z","level":"info","event":"DAG bundles loaded: dags-folder","logger":"airflow.dag_processing.bundles.manager.DagBundlesManager","filename":"manager.py","lineno":179}
+{"timestamp":"2026-04-05T02:04:48.892208Z","level":"info","event":"Filling up the DagBag from /opt/airflow/dags/professor_rating_dag.py","logger":"airflow.models.dagbag.BundleDagBag","filename":"dagbag.py","lineno":593}
+{"timestamp":"2026-04-05T02:25:48.068970Z","level":"info","event":"Wrote 100 professor review pages so far","logger":"task.stdout"}
+{"timestamp":"2026-04-05T02:25:48.727156Z","level":"info","event":"Wrote 200 professor review pages so far","logger":"task.stdout"}

@@ -14,6 +14,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from prediction_model.baseline import build_training_frame
 
+DEFAULT_CLASSIFICATION_THRESHOLD = 0.40
+
 
 @dataclass
 class StandardizedData:
@@ -114,7 +116,11 @@ def roc_auc_score_manual(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(auc)
 
 
-def classification_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> dict[str, float]:
+def classification_metrics(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    threshold: float = DEFAULT_CLASSIFICATION_THRESHOLD,
+) -> dict[str, float]:
     y_pred = (y_prob >= threshold).astype(int)
 
     tp = int(((y_pred == 1) & (y_true == 1)).sum())
@@ -166,8 +172,16 @@ def train_and_evaluate(database_url: str | None = None) -> dict[str, object]:
     train_prob = model.predict_proba(standardized.train)
     test_prob = model.predict_proba(standardized.test)
 
-    train_metrics = classification_metrics(y_train.to_numpy(dtype=int), train_prob)
-    test_metrics = classification_metrics(y_test.to_numpy(dtype=int), test_prob)
+    train_metrics = classification_metrics(
+        y_train.to_numpy(dtype=int),
+        train_prob,
+        threshold=DEFAULT_CLASSIFICATION_THRESHOLD,
+    )
+    test_metrics = classification_metrics(
+        y_test.to_numpy(dtype=int),
+        test_prob,
+        threshold=DEFAULT_CLASSIFICATION_THRESHOLD,
+    )
 
     predictions = raw_df.loc[raw_df["term_id"].astype(str) == test_term, [
         "term_id",
@@ -177,11 +191,15 @@ def train_and_evaluate(database_url: str | None = None) -> dict[str, object]:
         "filled_binary",
     ]].copy()
     predictions["predicted_fill_probability"] = test_prob
+    predictions["predicted_filled_binary"] = (
+        predictions["predicted_fill_probability"] >= DEFAULT_CLASSIFICATION_THRESHOLD
+    ).astype(int)
     predictions = predictions.sort_values("predicted_fill_probability", ascending=False)
 
     return {
         "train_term": train_term,
         "test_term": test_term,
+        "classification_threshold": DEFAULT_CLASSIFICATION_THRESHOLD,
         "train_metrics": train_metrics,
         "test_metrics": test_metrics,
         "top_weights": top_feature_weights(model, x_train.columns.tolist()),
@@ -194,6 +212,7 @@ if __name__ == "__main__":
 
     print(f"Train term: {results['train_term']}")
     print(f"Test term: {results['test_term']}")
+    print(f"Classification threshold: {results['classification_threshold']:.2f}")
     print()
     print("Train metrics:")
     print(pd.Series(results["train_metrics"]).to_string())
