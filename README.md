@@ -52,6 +52,80 @@ and predictive modeling.
 
 ---
 
+## How To Run
+
+### 1. Install Python dependencies
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Start the local Postgres + Airflow stack
+
+From the repo root:
+
+```bash
+docker compose -f airflow-docker/docker-compose.yaml up -d
+```
+
+The application database is exposed at:
+- `postgresql+psycopg2://app:app@localhost:5433/appdb`
+
+### 3. Populate or refresh the database
+
+If you are moving local SQLite data into Postgres:
+
+```bash
+python migration.py
+```
+
+If you want Airflow to run the ETL pipelines, open:
+- Airflow API/UI stack: [http://localhost:8080](http://localhost:8080)
+
+Then trigger the relevant DAGs, such as:
+- SIS ingestion DAGs
+- Course Forum review DAG
+- major requirement DAG
+
+### 4. Run the Flask dashboard
+
+```bash
+export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
+venv/bin/flask --app app.main run
+```
+
+Then open:
+- [http://127.0.0.1:5000](http://127.0.0.1:5000)
+
+### 5. Run model evaluation
+
+To evaluate the current section fill model locally:
+
+```bash
+export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
+venv/bin/python prediction_model/train_section_baseline.py
+```
+
+### 6. Generate synthetic student-section training data
+
+```bash
+export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
+venv/bin/python prediction_model/student_training_data.py
+```
+
+This writes:
+- [prediction_model/student_section_training_data.csv](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/prediction_model/student_section_training_data.csv)
+
+### Notes
+
+- The dashboard currently reads live data from Postgres, not SQLite.
+- The Course Forum review and sentiment features depend on the review-ingestion Airflow DAG having run successfully.
+- If Docker is not running, the dashboard and model scripts will not be able to reach the local Postgres database on port `5433`.
+
+---
+
 ## Project Notes
 
 - Synthetic student-section dataset notes:
