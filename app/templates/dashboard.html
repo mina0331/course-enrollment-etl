@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Course Demand Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Course Demand Dashboard</p>
+        <h1>{{ term_name }} Classes</h1>
+        <p class="hero-text">
+          Pick a semester from the dropdown and browse classes with course demand and review sentiment side by side.
+        </p>
+      </div>
+      <form class="search-card" method="get">
+        <label for="term">Term</label>
+        <select id="term" name="term">
+          {% for option in available_terms %}
+          <option value="{{ option.value }}" {% if option.value == term_id %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <label for="q">Search classes</label>
+        <input id="q" name="q" value="{{ search }}" placeholder="MATH, Calculus, professor, class number">
+        <button type="submit">Update Dashboard</button>
+      </form>
+    </section>
+
+    <section class="stats-grid">
+      <article class="stat-card">
+        <span class="stat-label">Sections Shown</span>
+        <strong class="stat-value">{{ total_sections }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Unique Courses</span>
+        <strong class="stat-value">{{ total_courses }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Open Sections</span>
+        <strong class="stat-value">{{ open_sections }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Sections With Review Signal</span>
+        <strong class="stat-value">{{ sections_with_reviews }}</strong>
+      </article>
+    </section>
+
+    <section class="table-card">
+      <div class="table-header">
+        <div>
+          <p class="eyebrow">Semester View</p>
+          <h2>Available classes, demand, and sentiment</h2>
+        </div>
+        <p class="legend">
+          Demand score comes from Course Forum review volume and sentiment. Overall sentiment is a score from <strong>-1 to 1</strong>:
+          values closer to <strong>1</strong> mean reviews are more positive, values near <strong>0</strong> are mixed or neutral, and values below
+          <strong>0</strong> lean negative.
+        </p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th>Section</th>
+              <th>Status</th>
+              <th>Seats</th>
+              <th>Waitlist</th>
+              <th>Professors</th>
+              <th>Demand Score</th>
+              <th>Overall Sentiment<br><span class="header-note">-1 negative, 0 mixed, 1 positive</span></th>
+              <th>Reviews</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td>
+                <div class="course-cell">
+                  <strong>{{ row.subject_id }} {{ row.catalog_nbr }}</strong>
+                  <span>{{ row.title }}</span>
+                </div>
+              </td>
+              <td>{{ row.class_nbr }}</td>
+              <td>
+                <span class="badge {% if row.enrollment_status == 'O' %}badge-open{% else %}badge-closed{% endif %}">
+                  {{ 'Open' if row.enrollment_status == 'O' else 'Closed' }}
+                </span>
+              </td>
+              <td>{{ row.seats_taken }}/{{ row.capacity }} <span class="muted">({{ row.seats_open }} open)</span></td>
+              <td>{{ row.current_waitlist }}</td>
+              <td class="professor-cell">{{ row.professor_names }}</td>
+              <td>
+                {% if row.demand_score is not none %}
+                  {{ "%.2f"|format(row.demand_score) }}
+                {% else %}
+                  <span class="muted">No data</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if row.overall_sentiment is not none %}
+                  <span class="{% if row.overall_sentiment > 0.2 %}sentiment-positive{% elif row.overall_sentiment < -0.1 %}sentiment-negative{% else %}sentiment-neutral{% endif %}">
+                    {{ "%.2f"|format(row.overall_sentiment) }}
+                  </span>
+                {% else %}
+                  <span class="muted">No data</span>
+                {% endif %}
+              </td>
+              <td>{{ row.total_reviews }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

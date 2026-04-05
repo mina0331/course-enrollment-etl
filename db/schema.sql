@@ -65,3 +65,53 @@ CREATE TABLE IF NOT EXISTS "professor_rating_raw_html"(
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (subject, catalog_nbr, course_id)
 );
+
+CREATE TABLE IF NOT EXISTS "course_forum_professor_page_raw_html"(
+    course_id INT NOT NULL,
+    subject TEXT NOT NULL,
+    catalog_nbr TEXT NOT NULL,
+    professor_name TEXT NOT NULL,
+    professor_page_url TEXT NOT NULL PRIMARY KEY,
+    raw_html TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "course_forum_review"(
+    review_key TEXT NOT NULL PRIMARY KEY,
+    course_id INT NOT NULL,
+    subject TEXT NOT NULL,
+    catalog_nbr TEXT NOT NULL,
+    professor_id INT,
+    professor_name TEXT NOT NULL,
+    professor_page_url TEXT NOT NULL,
+    review_term_label TEXT,
+    updated_at TEXT,
+    professor_review_text TEXT,
+    course_review_text TEXT,
+    full_review_text TEXT NOT NULL,
+    sentiment_score DOUBLE PRECISION NOT NULL,
+    professor_sentiment_score DOUBLE PRECISION,
+    course_sentiment_score DOUBLE PRECISION,
+    sentiment_label TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "course_forum_review_summary"(
+    course_id INT NOT NULL,
+    professor_id INT,
+    subject TEXT NOT NULL,
+    catalog_nbr TEXT NOT NULL,
+    professor_name TEXT NOT NULL,
+    professor_page_url TEXT NOT NULL,
+    review_count INT NOT NULL,
+    positive_review_count INT NOT NULL,
+    neutral_review_count INT NOT NULL,
+    negative_review_count INT NOT NULL,
+    avg_sentiment_score DOUBLE PRECISION NOT NULL,
+    avg_professor_sentiment_score DOUBLE PRECISION,
+    avg_course_sentiment_score DOUBLE PRECISION,
+    sentiment_demand_score DOUBLE PRECISION NOT NULL,
+    most_recent_review_at TEXT,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (course_id, professor_name)
+);

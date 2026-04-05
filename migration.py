@@ -11,7 +11,10 @@ TABLES_IN_ORDER = [
     "professor",
     "section_professor",
     "raw_sis_data",
-    "professor_rating_raw_html"
+    "professor_rating_raw_html",
+    "course_forum_professor_page_raw_html",
+    "course_forum_review",
+    "course_forum_review_summary",
 ]
 
 def copy_table(table: str, sqlite_conn, pg_engine):

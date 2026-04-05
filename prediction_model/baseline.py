@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, text
 
 BASE_DIR = Path(__file__).resolve().parent
 FEATURE_SQL_PATH = BASE_DIR / "enrollment_features.sql"
+LEGACY_FEATURE_SQL_PATH = BASE_DIR / "enrollment_features_legacy_section_professor.sql"
 
 # These are useful for in-semester monitoring, but they leak the outcome for a
 # pre-registration prediction model.
@@ -24,13 +25,42 @@ LEAKY_SNAPSHOT_COLUMNS = [
 
 def load_feature_frame(
     database_url: str | None = None,
-    sql_path: Path = FEATURE_SQL_PATH,
+    sql_path: Path | None = None,
 ) -> pd.DataFrame:
     database_url = database_url or os.environ["DATABASE_URL"]
-    query = sql_path.read_text()
     engine = create_engine(database_url)
     with engine.begin() as conn:
+        query = resolve_feature_sql(conn, sql_path=sql_path).read_text()
         return pd.read_sql(text(query), conn)
+
+
+def resolve_feature_sql(conn, sql_path: Path | None = None) -> Path:
+    if sql_path is not None:
+        return sql_path
+
+    dialect = conn.engine.dialect.name
+    if dialect == "sqlite":
+        columns_df = pd.read_sql(
+            text("PRAGMA table_info(section_professor)"),
+            conn,
+        )
+        columns = set(columns_df["name"].astype(str).tolist())
+    else:
+        columns_df = pd.read_sql(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'section_professor'
+                """
+            ),
+            conn,
+        )
+        columns = set(columns_df["column_name"].astype(str).tolist())
+
+    if "course_id" in columns:
+        return FEATURE_SQL_PATH
+    return LEGACY_FEATURE_SQL_PATH
 
 
 def _parse_meeting_time(value: object) -> int | None:

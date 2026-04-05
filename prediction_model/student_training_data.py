@@ -43,11 +43,20 @@ def _prepare_section_pool(section_df: pd.DataFrame) -> pd.DataFrame:
     pool["avg_prof_difficulty"] = pool["avg_prof_difficulty"].fillna(
         pool["avg_prof_difficulty"].median()
     )
+    pool["avg_course_forum_sentiment"] = pool["avg_course_forum_sentiment"].fillna(0.0)
+    pool["avg_course_forum_demand"] = pool["avg_course_forum_demand"].fillna(0.0)
+    pool["avg_course_forum_review_count"] = pool["avg_course_forum_review_count"].fillna(0.0)
+    pool["total_course_forum_reviews"] = pool["total_course_forum_reviews"].fillna(0.0)
     pool["course_level"] = pool["course_level"].fillna(pool["catalog_nbr"].map(_parse_course_level))
     pool["historical_demand"] = pool["avg_fill_ratio_prior_course"].fillna(
         pool["avg_fill_ratio_prior_subject_level"]
     )
     pool["historical_demand"] = pool["historical_demand"].fillna(pool["fill_ratio"]).fillna(0.5)
+    pool["course_forum_signal"] = (
+        pool["avg_course_forum_demand"].clip(lower=0)
+        + 0.15 * pool["avg_course_forum_sentiment"].clip(lower=-1, upper=1)
+        + 0.03 * np.log1p(pool["total_course_forum_reviews"].clip(lower=0))
+    )
     pool["seat_pressure"] = (
         pool["fill_ratio"].clip(lower=0, upper=1.5)
         + 0.1 * pool["current_waitlist"].clip(lower=0)
@@ -123,6 +132,7 @@ def simulate_student_section_attempts(
         training_df["historical_demand"].clip(0, 1.5)
         + training_df["fill_ratio"].clip(0, 1.5)
         + training_df["waitlist_ratio"].fillna(0).clip(0, 1.5)
+        + 0.20 * training_df["course_forum_signal"].clip(lower=0, upper=3)
     )
 
     # The only student-specific access feature is enrollment timing. Everything

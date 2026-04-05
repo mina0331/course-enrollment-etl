@@ -1,0 +1,264 @@
+:root {
+  --bg: #f5efe4;
+  --panel: rgba(255, 251, 245, 0.88);
+  --panel-strong: #fffaf2;
+  --ink: #1e2230;
+  --muted: #6d7280;
+  --line: rgba(30, 34, 48, 0.12);
+  --accent: #d9643a;
+  --accent-soft: rgba(217, 100, 58, 0.14);
+  --open: #2f7d4a;
+  --closed: #8f3f3f;
+  --positive: #1d6f5f;
+  --neutral: #8a6a33;
+  --negative: #a13f4a;
+  --shadow: 0 24px 60px rgba(61, 44, 20, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(217, 100, 58, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(47, 125, 74, 0.15), transparent 24%),
+    linear-gradient(180deg, #f8f2e8 0%, var(--bg) 100%);
+}
+
+.page-shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 24px 56px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+}
+
+.hero-copy,
+.search-card,
+.stat-card,
+.table-card {
+  background: var(--panel);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: var(--shadow);
+  border-radius: 24px;
+}
+
+.hero-copy {
+  padding: 32px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.76rem;
+  color: var(--accent);
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1;
+}
+
+h1 {
+  font-size: clamp(2.6rem, 5vw, 4.8rem);
+}
+
+h2 {
+  font-size: clamp(1.6rem, 2.6vw, 2.4rem);
+}
+
+.hero-text,
+.legend {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.search-card {
+  display: grid;
+  gap: 10px;
+  padding: 28px;
+}
+
+.search-card label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.search-card input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.search-card select {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.search-card button {
+  margin-top: 10px;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #d9643a, #e09a52);
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.stats-grid {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
+  padding: 22px 24px;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.stat-value {
+  display: block;
+  margin-top: 10px;
+  font-size: 2rem;
+}
+
+.table-card {
+  margin-top: 24px;
+  padding: 24px;
+}
+
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1100px;
+}
+
+thead th {
+  text-align: left;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.header-note {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+
+tbody td {
+  padding: 16px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+tbody tr:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.course-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.course-cell span,
+.muted,
+.professor-cell {
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.badge-open {
+  background: rgba(47, 125, 74, 0.12);
+  color: var(--open);
+}
+
+.badge-closed {
+  background: rgba(143, 63, 63, 0.12);
+  color: var(--closed);
+}
+
+.sentiment-positive {
+  color: var(--positive);
+  font-weight: 700;
+}
+
+.sentiment-neutral {
+  color: var(--neutral);
+  font-weight: 700;
+}
+
+.sentiment-negative {
+  color: var(--negative);
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .hero,
+  .stats-grid,
+  .table-header {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .table-header {
+    align-items: start;
+  }
+}
