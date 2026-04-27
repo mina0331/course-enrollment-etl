@@ -1,7 +1,7 @@
 # course-enrollment-etl
 
-This project builds an end-to-end ETL pipeline that ingests university course enrollment data,
-normalizes it into a relational schema, and prepares it for downstream analytics and modeling.
+This project builds an end-to-end ETL pipeline and modeling workspace for course
+demandibility prediction.
 
 The pipeline extracts raw course, section, and instructor data from term-based sources, handles
 inconsistent schemas across semesters, and transforms nested JSON into clean, queryable tables.
@@ -15,8 +15,9 @@ and enrollment forecasting.
 Key challenges addressed include handling mixed JSON formats, resolving entity relationships across
 terms, and ensuring consistent identifiers despite changes in upstream data.
 
-This project serves as the data foundation for course enrollment analytics, historical trend analysis,
-and predictive modeling.
+The current modeling focus is demandibility: estimating how strongly a course is
+likely to be demanded based on major requirements, historical enrollment
+pressure, Course Forum signals, instructor metadata, and section capacity.
 
 ---
 
@@ -45,10 +46,12 @@ and predictive modeling.
 - Git and GitHub for version control
 - Command-line tooling for local debugging and validation
 
-### Future Extensions
-- Enrollment and waitlist outcome prediction
-- Feature engineering for course demand modeling
-- Student-facing analytics and decision support tools
+### Modeling Focus
+- Major-requirement demand signals
+- Historical fill and waitlist pressure
+- Course Forum demand and sentiment features
+- Instructor metadata and difficulty-driven demand relief
+- Course demand analytics by major/program context
 
 ---
 
@@ -108,7 +111,7 @@ export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
 venv/bin/python prediction_model/train_section_baseline.py
 ```
 
-### 6. Generate synthetic student-section training data
+### 6. Generate synthetic demandibility training data
 
 ```bash
 export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
@@ -117,6 +120,17 @@ venv/bin/python prediction_model/student_training_data.py
 
 This writes:
 - [prediction_model/student_section_training_data.csv](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/prediction_model/student_section_training_data.csv)
+
+### 7. Run the demandibility probability model
+
+```bash
+export DATABASE_URL=postgresql+psycopg2://app:app@localhost:5433/appdb
+venv/bin/python prediction_model/train_user_probability_model.py
+```
+
+This evaluates the experimental demandibility probability model. The next model
+iteration should replace student-preference features with major requirement
+signals from the requirement pipeline.
 
 ### Notes
 
@@ -128,7 +142,7 @@ This writes:
 
 ## Project Notes
 
-- Synthetic student-section dataset notes:
+- Synthetic demandibility dataset notes:
   [docs/synthetic_training_data.md](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/docs/synthetic_training_data.md)
-- Model accuracy improvement report for April 5, 2026:
-  [docs/model_accuracy_improvement_2026-04-05.md](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/docs/model_accuracy_improvement_2026-04-05.md)
+- Demandibility model notes:
+  [docs/demandibility_prediction_model.md](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/docs/demandibility_prediction_model.md)

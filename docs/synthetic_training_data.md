@@ -1,20 +1,20 @@
-# Synthetic Training Data
+# Synthetic Demandibility Training Data
 
-This project includes a synthetic student-section dataset generator in
+This project includes a synthetic student-section demandibility dataset generator in
 [prediction_model/student_training_data.py](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/prediction_model/student_training_data.py).
 
-The goal of this dataset is to simulate course registration attempts at the
-student-section level using real section demand signals plus simple student-side
-behavior assumptions.
+The goal is to compute major-aware course demandibility using major
+requirements and real section demand signals. This should not represent whether
+a specific student will try to enroll, and it should not depend on personal
+preference profiles.
 
 ## What It Produces
 
-The generator creates one row per simulated registration attempt.
+The generator should create one row per synthetic student and section.
 
 By default:
 - `n_students = 2000`
-- `attempts_per_student = 5`
-- output size is about `10,000` synthetic rows
+- output size is `n_students * section_count`
 
 The CSV export path is:
 - [prediction_model/student_section_training_data.csv](/Users/sominahn/Library/Mobile%20Documents/com~apple~CloudDocs/Course%20SIS%20Project/course-enrollment-etl/prediction_model/student_section_training_data.csv)
@@ -36,12 +36,12 @@ combines them with real section-side scarcity signals.
 
 ## Student Fields
 
-Each synthetic student gets:
+Each synthetic student/program context should get:
 - `student_id`: synthetic identifier
+- `major_code`: academic program identifier
 - `class_standing`: one of `first_year`, `sophomore`, `junior`, `senior`
-- `priority_score`: higher for upperclass students
-- `enrollment_slot_hours`: simulated registration timing
-- `max_course_level`: upper bound on course level the student is assumed to target
+- `priority_score`: optional registration-order context, if modeling access pressure
+- `enrollment_slot_hours`: optional registration timing context, if modeling access pressure
 
 The standing mix is sampled probabilistically:
 - senior: `24%`
@@ -80,34 +80,38 @@ The generator computes several intermediate fields before sampling outcomes:
 - `historical_demand`: backfilled from prior course or subject-level fill history
 - `course_forum_signal`: combines review demand, review sentiment, and review volume
 - `seat_pressure`: combines fill pressure and current waitlist pressure
-- `is_morning_course`: whether the meeting time appears to be in the morning
-- `level_ok`: whether the course level is at or below the student's assumed level
+- `major_required`: whether the course appears in the student's major requirements
+- `required_by_major_count`: number of programs that mention the course
+- `major_requirement_demand`: major-driven course demand signal
 - `registration_competitiveness`: combined scarcity and demand measure
+- `difficulty_demand_relief`: how much high professor difficulty is treated as lowering demand
 
-## Outcome Columns
+## Target Columns
 
-Each synthetic row gets three outcome-style columns:
-- `got_in_probability`: model-based probability of successful enrollment
-- `got_in`: Bernoulli draw from that probability
-- `waitlisted`: `1` when the student did not get in and the section had a waitlist
+The demandibility-focused target should be course demand, not whether a specific
+student attempted registration or successfully enrolled.
 
-The probability is driven by:
-- class standing priority
-- enrollment timing
+Preferred target columns:
+- `demandibility_score`: continuous course/program demand score
+- `demandibility_probability`: sigmoid-scaled demand score
+- `high_demand`: optional binary label sampled from the demandibility probability
+
+The score should be driven by:
+- major requirement demand
 - historical demand
 - fill pressure
 - waitlist pressure
+- professor difficulty as a demand-reducing signal
 - Course Forum demand signal
 - section capacity
-- whether the section level matches the student profile
 
 ## Why It Is Synthetic
 
-This dataset is not a historical log of real student registration attempts.
+This dataset is not a historical log of real student registration behavior.
 It is a simulation layer intended to support:
-- prototyping downstream student-facing tools
-- testing personalized recommendation logic
-- experimenting with waitlist and access-risk features
+- prototyping downstream demand analytics
+- testing major-aware course demand estimates
+- experimenting with waitlist and access-pressure features
 
 The section side of the data is real. The student side and the final
 registration outcomes are simulated.
@@ -117,11 +121,8 @@ registration outcomes are simulated.
 The generator is designed to be future-like, not future-perfect.
 
 To avoid simply replaying past enrollment outcomes, the simulation now includes:
-- student interest areas tied loosely to subject families
-- schedule flexibility differences across students
-- difficulty tolerance differences across students
-- planning noise at the student level
-- random term/course shocks at the attempt level
+- major-specific requirement matching
+- random term/course/subject shocks
 
 Those additions make the synthetic outcomes less deterministic and help the
 dataset reflect the uncertainty of future enrollment behavior.
@@ -131,10 +132,10 @@ future demand. It is best understood as a scenario simulator anchored to real
 historical section features.
 
 The main limitations are:
-- it does not observe real student preference histories
-- it does not model major-specific degree progress directly
+- it does not observe real student enrollment decisions
+- it does not model individual degree progress within a major yet
 - it does not know future curriculum changes, professor switches, or macro shocks
-- it uses stylized behavioral assumptions rather than learned causal behavior
+- it uses stylized demand assumptions rather than learned causal behavior
 
 The right interpretation is:
 - good for experimentation and stress testing

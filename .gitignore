@@ -6,9 +6,20 @@ venv/
 airflow/logs/
 airflow/plugins/
 airflow/__pycache__/
+airflow-docker/logs/
+etl/airflow/logs/
+
+# Python runtime artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
 
 # Databases
 /db
+data/*.db
+data/*.db-*
+airflow-docker/data/*.db
+airflow-docker/data/*.db-*
 
 # Secrets
 .env

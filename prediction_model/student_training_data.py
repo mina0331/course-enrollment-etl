@@ -94,6 +94,13 @@ def _subject_interest_boost(subject: object, interest_area: str) -> float:
     return 0.0
 
 
+def _build_student_section_grid(
+    students: pd.DataFrame,
+    sections: pd.DataFrame,
+) -> pd.DataFrame:
+    return students.merge(sections, how="cross")
+
+
 def generate_student_profiles(
     n_students: int = 2000,
     *,
@@ -135,26 +142,17 @@ def generate_student_profiles(
     return pd.DataFrame.from_records(records)
 
 
-def simulate_student_section_attempts(
+def simulate_student_section_probabilities(
     section_df: pd.DataFrame,
     *,
     n_students: int = 2000,
-    attempts_per_student: int = 5,
     seed: int = 42,
 ) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     sections = _prepare_section_pool(section_df)
     students = generate_student_profiles(n_students=n_students, seed=seed)
 
-    sampled_sections = sections.sample(
-        n=n_students * attempts_per_student,
-        replace=True,
-        random_state=seed,
-    ).reset_index(drop=True)
-    repeated_students = students.loc[students.index.repeat(attempts_per_student)].reset_index(drop=True)
-
-    training_df = pd.concat([repeated_students, sampled_sections], axis=1)
-    training_df["attempt_id"] = np.arange(1, len(training_df) + 1)
+    training_df = _build_student_section_grid(students, sections)
 
     training_df["level_ok"] = (
         training_df["course_level"].fillna(0) <= training_df["max_course_level"]
@@ -163,19 +161,42 @@ def simulate_student_section_attempts(
         _subject_interest_boost(subject, interest_area)
         for subject, interest_area in zip(training_df["subject_id"], training_df["interest_area"])
     ]
-    training_df["time_penalty"] = (
-        training_df["is_morning_course"].astype(int) * (1.0 - training_df["schedule_flexibility"])
+    level_gap = (training_df["course_level"].fillna(0) - training_df["max_course_level"]).clip(lower=0)
+    training_df["level_gap_penalty"] = (level_gap / 1000).clip(upper=3.0)
+    training_df["time_fit"] = np.where(
+        training_df["is_morning_course"].astype(bool),
+        training_df["schedule_flexibility"],
+        1.0,
     )
-    training_df["difficulty_penalty"] = (
-        (training_df["avg_prof_difficulty"].fillna(0) - 2.5) * (0.35 - training_df["difficulty_tolerance"])
+    training_df["student_course_demand"] = (
+        0.70 * pd.Series(training_df["interest_match"], index=training_df.index).astype(float)
+        + 0.30 * training_df["level_ok"].astype(float)
+        + 0.10 * training_df["time_fit"].astype(float)
+        - 0.20 * training_df["level_gap_penalty"].astype(float)
     )
-    training_df["term_shock"] = rng.normal(0.0, 0.30, size=len(training_df))
-    training_df["course_shock"] = rng.normal(0.0, 0.22, size=len(training_df))
+    term_ids = training_df["term_id"].astype(str)
+    unique_terms = term_ids.unique()
+    term_shock_map = {term_id: float(rng.normal(0.0, 0.30)) for term_id in unique_terms}
+    training_df["term_shock"] = term_ids.map(term_shock_map).astype(float)
+
+    section_keys = training_df["class_nbr"].astype(str)
+    unique_sections = section_keys.unique()
+    section_shock_map = {section_key: float(rng.normal(0.0, 0.22)) for section_key in unique_sections}
+    training_df["course_shock"] = section_keys.map(section_shock_map).astype(float)
+
+    subject_ids = training_df["subject_id"].astype(str)
+    unique_subjects = subject_ids.unique()
+    subject_shock_map = {subject_id: float(rng.normal(0.0, 0.12)) for subject_id in unique_subjects}
+    training_df["subject_shock"] = subject_ids.map(subject_shock_map).astype(float)
+    training_df["difficulty_demand_relief"] = (
+        (training_df["avg_prof_difficulty"].fillna(2.5) - 2.5) / 2.5
+    ).clip(-1.0, 1.0)
     training_df["registration_competitiveness"] = (
         training_df["historical_demand"].clip(0, 1.5)
         + training_df["fill_ratio"].clip(0, 1.5)
         + training_df["waitlist_ratio"].fillna(0).clip(0, 1.5)
         + 0.20 * training_df["course_forum_signal"].clip(lower=0, upper=3)
+        - 0.20 * training_df["difficulty_demand_relief"]
     )
 
     # The synthetic process is intentionally noisy so it can mimic future demand
@@ -184,16 +205,14 @@ def simulate_student_section_attempts(
         0.9
         + 0.7 * training_df["priority_score"]
         - 0.035 * training_df["enrollment_slot_hours"]
+        + 0.45 * training_df["student_course_demand"]
         - 1.1 * training_df["registration_competitiveness"]
         - 0.02 * training_df["current_waitlist"].clip(lower=0)
         + 0.012 * training_df["capacity"].clip(lower=0, upper=500)
-        + 0.40 * training_df["level_ok"]
-        + 0.35 * training_df["interest_match"]
-        - 0.45 * training_df["time_penalty"]
-        - 0.22 * training_df["difficulty_penalty"]
         + training_df["planning_noise"]
         + training_df["term_shock"]
         + training_df["course_shock"]
+        + training_df["subject_shock"]
     )
 
     probability = _sigmoid(np.nan_to_num(linear_score.to_numpy(), nan=0.0))
@@ -210,14 +229,12 @@ def simulate_student_section_attempts(
 def build_student_training_data(
     *,
     n_students: int = 2000,
-    attempts_per_student: int = 5,
     seed: int = 42,
 ) -> pd.DataFrame:
     section_features = load_feature_frame()
-    return simulate_student_section_attempts(
+    return simulate_student_section_probabilities(
         section_features,
         n_students=n_students,
-        attempts_per_student=attempts_per_student,
         seed=seed,
     )
 
@@ -226,12 +243,10 @@ def export_student_training_data(
     output_path: Path = OUTPUT_PATH,
     *,
     n_students: int = 2000,
-    attempts_per_student: int = 5,
     seed: int = 42,
 ) -> pd.DataFrame:
     training_df = build_student_training_data(
         n_students=n_students,
-        attempts_per_student=attempts_per_student,
         seed=seed,
     )
     training_df.to_csv(output_path, index=False)
